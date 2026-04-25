@@ -14,6 +14,8 @@ export const customError = (
   err: AppError,
   req: RequestExtended,
   res: Response,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _next: NextFunction,
 ) => {
   if (res.headersSent) return;
 
@@ -96,7 +98,7 @@ export const notFound = (req: Request, _res: Response, next: NextFunction) => {
   });
 };
 
-class ApiException extends Error {
+export class ApiException extends Error {
   status?: number;
   code?: number;
   errorDescription?: string;
