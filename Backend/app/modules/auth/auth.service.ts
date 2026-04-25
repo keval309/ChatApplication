@@ -49,6 +49,7 @@ async function hydrateAuthUser(userId: string): Promise<AuthUserResponseDTO> {
     avatarUrl: user.avatarUrl,
     statusMessage: user.statusMessage,
     bio: user.bio,
+    presenceStatus: user.presenceStatus,
     emailVerifiedAt: user.emailVerifiedAt,
     hasPassword: Boolean(user.passwordHash),
     providers,

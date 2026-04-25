@@ -53,6 +53,7 @@ router.patch(
       avatarUrl: req.body.avatarUrl,
       statusMessage: req.body.statusMessage,
       bio: req.body.bio,
+      presenceStatus: req.body.presenceStatus,
     });
     return { user: profile };
   }),

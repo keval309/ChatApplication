@@ -1,4 +1,5 @@
 import type { AuthProvider, VerificationTokenType } from "../../generated/prisma/client";
+import type { PresenceStatus } from "../../generated/prisma/client";
 
 export interface RegisterDTO {
   email: string;
@@ -36,6 +37,7 @@ export interface AuthUserResponseDTO {
   avatarUrl: string | null;
   statusMessage: string | null;
   bio: string | null;
+  presenceStatus: PresenceStatus;
   emailVerifiedAt: Date | null;
   hasPassword: boolean;
   providers: AuthProvider[];
@@ -67,4 +69,4 @@ export interface GoogleProfileDTO {
   picture?: string;
 }
 
-export type { AuthProvider, VerificationTokenType };
+export type { AuthProvider, PresenceStatus, VerificationTokenType };
