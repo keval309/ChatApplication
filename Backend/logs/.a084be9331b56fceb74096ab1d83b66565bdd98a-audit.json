@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "logs\\.a084be9331b56fceb74096ab1d83b66565bdd98a-audit.json",
+    "files": [
+        {
+            "date": 1777095116802,
+            "name": "logs\\fcb-payments-2026-04-25.log",
+            "hash": "e8d80f5c9e1700c29f2d0bad2e821f6e5ebcc8d3b5e90e35d1344ae7728d3e0b"
+        }
+    ],
+    "hashType": "sha256"
+}
