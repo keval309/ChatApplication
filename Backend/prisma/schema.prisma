@@ -1,24 +1,153 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// Prisma schema for streamChat auth flow (v1)
+// Aligns with PRD §15 (User, Conversation, ...) and PRD §3 (Authentication)
+// Conventions (per .cursor/rules/chatflow.mdc):
+//   - cuid() ids
+//   - createdAt / updatedAt on every model
+//   - soft delete via deletedAt where applicable
+//   - snake_case table names via @@map
 
 generator client {
-  provider = "prisma-client-js"
+  provider            = "prisma-client"
+  output              = "../app/generated/prisma"
+  runtime             = "nodejs"
+  importFileExtension = "ts"
 }
 
 datasource db {
   provider = "postgresql"
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum PresenceStatus {
+  ONLINE
+  AWAY
+  DND
+  INVISIBLE
+  OFFLINE
+}
+
+enum AuthProvider {
+  GOOGLE
+}
+
+enum VerificationTokenType {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User
+// ─────────────────────────────────────────────────────────────────────────────
+
 model User {
-  id        String   @id @unique @default(uuid())
-  firstName String
-  lastName  String
-  password  String
-  bio       String?
-  email     String
-  isDeleted Boolean  @default(false)
+  id              String         @id @default(cuid())
+  email           String         @unique
+  username        String?        @unique
+  displayName     String?
+  passwordHash    String?
+  avatarUrl       String?
+  statusMessage   String?
+  bio             String?
+  presenceStatus  PresenceStatus @default(OFFLINE)
+  lastSeenAt      DateTime?
+  emailVerifiedAt DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  accounts           Account[]
+  sessions           Session[]
+  verificationTokens VerificationToken[]
+
+  @@index([email])
+  @@index([username])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Account — OAuth provider link (PRD §3.1 account linking)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Account {
+  id                String       @id @default(cuid())
+  userId            String
+  provider          AuthProvider
+  providerAccountId String
+  accessToken       String?
+  refreshToken      String?
+  expiresAt         DateTime?
+
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session — refresh-token-backed session for concurrent session management
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Session {
+  id               String    @id @default(cuid())
+  userId           String
+  refreshTokenHash String    @unique
+  userAgent        String?
+  ipAddress        String?
+  rememberMe       Boolean   @default(false)
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  lastUsedAt       DateTime  @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VerificationToken — email verification + password reset
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VerificationToken {
+  id          String                @id @default(cuid())
+  userId      String
+  tokenHash   String                @unique
+  type        VerificationTokenType
+  expiresAt   DateTime
+  consumedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@map("verification_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LoginAttempt — used to enforce 5-fail / 15-min lockout (PRD §3.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  email     String
+  ipAddress String?
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([ipAddress, createdAt])
+  @@map("login_attempts")
 }

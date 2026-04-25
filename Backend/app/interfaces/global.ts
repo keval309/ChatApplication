@@ -1,24 +1,21 @@
 import { Request } from "express";
-import { JwtPayload } from "jsonwebtoken";
-// Define your User type properly
-export interface AuthUser extends JwtPayload {
+
+export interface AuthUserContext {
   id: string;
-  email?: string;
-  role?: string;
+  email: string;
+  sessionId: string;
 }
 
-// Define logger function types
-type LogFunction = (message: string, meta?: unknown) => void;
+type LogFunction = (...args: unknown[]) => void;
 
 export interface RequestExtended extends Request {
-  user?: AuthUser;
+  user?: AuthUserContext;
   id?: string;
   traceId?: string;
   logId?: string;
-  file?: Express.Multer.File;
   log?: LogFunction;
   error?: LogFunction;
-  idAdmin?: boolean;
+  isAdmin?: boolean;
   filePath?: string;
 }
 
