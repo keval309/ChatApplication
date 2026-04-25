@@ -22,6 +22,7 @@ Thumbs.db
 **/dist/
 **/.next/
 **/out/
+Backend/uploads/
 
 # Prisma generated client
 Backend/app/generated/

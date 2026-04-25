@@ -13,6 +13,8 @@ export interface UserAuthRecord {
   displayName: string | null;
   passwordHash: string | null;
   avatarUrl: string | null;
+  statusMessage: string | null;
+  bio: string | null;
   emailVerifiedAt: Date | null;
   deletedAt: Date | null;
   presenceStatus: PresenceStatus;
@@ -25,6 +27,8 @@ const userAuthSelect = {
   displayName: true,
   passwordHash: true,
   avatarUrl: true,
+  statusMessage: true,
+  bio: true,
   emailVerifiedAt: true,
   deletedAt: true,
   presenceStatus: true,

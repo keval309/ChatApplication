@@ -1,4 +1,5 @@
 import express from "express";
+import path from "path";
 import helmet from "helmet";
 import md5 from "md5";
 import { v4 as uuidv4 } from "uuid";
@@ -32,6 +33,15 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"), {
+    maxAge: "1h",
+    setHeaders: (res) => {
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    },
+  }),
+);
 
 app.use((req: RequestExtended, _res, next) => {
   req.id = md5(uuidv4());

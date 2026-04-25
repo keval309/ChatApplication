@@ -34,6 +34,8 @@ export interface AuthUserResponseDTO {
   username: string | null;
   displayName: string | null;
   avatarUrl: string | null;
+  statusMessage: string | null;
+  bio: string | null;
   emailVerifiedAt: Date | null;
   hasPassword: boolean;
   providers: AuthProvider[];

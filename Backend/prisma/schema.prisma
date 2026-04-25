@@ -29,6 +29,12 @@ enum PresenceStatus {
   OFFLINE
 }
 
+enum NotificationLevel {
+  ALL_MESSAGES
+  MENTIONS_AND_REPLIES
+  NOTHING
+}
+
 enum AuthProvider {
   GOOGLE
 }
@@ -53,6 +59,11 @@ model User {
   bio             String?
   presenceStatus  PresenceStatus @default(OFFLINE)
   lastSeenAt      DateTime?
+  lastSeenVisible Boolean        @default(true)
+  sendReadReceipts Boolean       @default(true)
+  globalNotificationLevel NotificationLevel @default(ALL_MESSAGES)
+  lastPresenceHeartbeatAt DateTime?
+  autoUnmuteReminder Boolean     @default(false)
   emailVerifiedAt DateTime?
 
   createdAt DateTime  @default(now())
@@ -62,6 +73,9 @@ model User {
   accounts           Account[]
   sessions           Session[]
   verificationTokens VerificationToken[]
+  notificationPreferences ConversationNotificationPreference[]
+  blockedUsers       Block[]        @relation("user_blocks")
+  blockedByUsers     Block[]        @relation("user_blocked_by")
 
   @@index([email])
   @@index([username])
@@ -150,4 +164,40 @@ model LoginAttempt {
   @@index([email, createdAt])
   @@index([ipAddress, createdAt])
   @@map("login_attempts")
+}
+
+model Block {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  blocker User @relation("user_blocks", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("user_blocked_by", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+  @@map("blocks")
+}
+
+model ConversationNotificationPreference {
+  id                 String            @id @default(cuid())
+  userId             String
+  conversationId     String
+  notificationLevel  NotificationLevel @default(ALL_MESSAGES)
+  isMuted            Boolean           @default(false)
+  muteUntil          DateTime?
+  autoUnmuteReminder Boolean           @default(false)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, conversationId])
+  @@index([userId])
+  @@index([conversationId])
+  @@index([muteUntil])
+  @@map("conversation_notification_preferences")
 }

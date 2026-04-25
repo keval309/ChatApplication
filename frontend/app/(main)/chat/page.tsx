@@ -19,6 +19,9 @@ export default function ChatHomePage() {
           <span className="font-semibold">streamChat</span>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => router.push("/settings")}>
+            Settings
+          </Button>
           <ThemeToggle />
           <Button
             variant="outline"
