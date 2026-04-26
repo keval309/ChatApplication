@@ -3,6 +3,7 @@ import { prisma } from "../../client/prisma";
 import type {
   BlockedUserResponseDTO,
   ConversationNotificationPreferenceDTO,
+  DiscoverUserDTO,
   ProfileResponseDTO,
   SessionResponseDTO,
   UpdateUserSettingsDTO,
@@ -225,6 +226,46 @@ export async function findUserSummaryById(userId: string): Promise<{
   return prisma.user.findUnique({
     where: { id: userId },
     select: { id: true },
+  });
+}
+
+export async function discoverUsers(args: {
+  userId: string;
+  query: string;
+  limit: number;
+}): Promise<DiscoverUserDTO[]> {
+  const q = args.query.trim();
+  if (!q) return [];
+
+  return prisma.user.findMany({
+    where: {
+      id: { not: args.userId },
+      OR: [
+        { username: { contains: q, mode: "insensitive" } },
+        { displayName: { contains: q, mode: "insensitive" } },
+        { email: { contains: q, mode: "insensitive" } },
+      ],
+      blockedByUsers: {
+        none: {
+          blockerId: args.userId,
+        },
+      },
+      blockedUsers: {
+        none: {
+          blockedId: args.userId,
+        },
+      },
+    },
+    select: {
+      id: true,
+      username: true,
+      displayName: true,
+      avatarUrl: true,
+      bio: true,
+      presenceStatus: true,
+    },
+    orderBy: [{ displayName: "asc" }, { username: "asc" }, { createdAt: "desc" }],
+    take: args.limit,
   });
 }
 

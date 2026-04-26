@@ -12,6 +12,7 @@ import type { RequestExtended } from "../../interfaces/global";
 import * as userService from "./user.service";
 import {
   blockUserParamValidator,
+  discoverUsersValidator,
   sessionIdParam,
   updateSettingsValidator,
   updateProfileValidator,
@@ -66,6 +67,22 @@ router.get(
     const user = requireUser(req as RequestExtended);
     const username = String(req.params.username);
     return userService.getUsernameAvailability(username, user.id);
+  }),
+);
+
+router.get(
+  "/discover",
+  discoverUsersValidator,
+  asyncHandler(async (req) => {
+    const user = requireUser(req as RequestExtended);
+    const q = String(req.query.q ?? "");
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const users = await userService.discoverUsers({
+      userId: user.id,
+      query: q,
+      limit,
+    });
+    return { users };
   }),
 );
 

@@ -83,6 +83,5 @@ app.use((_req, res, next) => {
 
 app.use(routes);
 
-app.listen(env.PORT, () => {
-  logger.info(`Server started on port ${env.PORT}`);
-});
+export { app };
+export default app;

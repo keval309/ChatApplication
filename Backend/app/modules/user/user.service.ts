@@ -4,6 +4,7 @@ import * as userRepository from "./user.repository";
 import type {
   BlockedUserResponseDTO,
   ConversationNotificationPreferenceDTO,
+  DiscoverUserDTO,
   ProfileResponseDTO,
   SessionResponseDTO,
   UpdateUserSettingsDTO,
@@ -174,4 +175,21 @@ export async function revokeSession(args: {
   }
   if (session.revokedAt) return; // idempotent
   await userRepository.revokeSession(session.id);
+}
+
+export async function discoverUsers(args: {
+  userId: string;
+  query: string;
+  limit?: number;
+}): Promise<DiscoverUserDTO[]> {
+  const query = args.query.trim();
+  if (query.length < 2) {
+    return [];
+  }
+  const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
+  return userRepository.discoverUsers({
+    userId: args.userId,
+    query,
+    limit,
+  });
 }

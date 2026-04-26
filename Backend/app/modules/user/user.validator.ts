@@ -1,4 +1,4 @@
-import { body, param } from "express-validator";
+import { body, param, query } from "express-validator";
 
 const PRESENCE_STATUSES = ["ONLINE", "AWAY", "DND", "INVISIBLE", "OFFLINE"];
 const NOTIFICATION_LEVELS = [
@@ -108,4 +108,16 @@ export const upsertConversationPreferenceValidator = [
 
 export const blockUserParamValidator = [
   param("id").isString().notEmpty().withMessage("User id is required"),
+];
+
+export const discoverUsersValidator = [
+  query("q")
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage("q must be 1-100 characters"),
+  query("limit")
+    .optional()
+    .isInt({ min: 1, max: 50 })
+    .withMessage("limit must be between 1 and 50"),
 ];

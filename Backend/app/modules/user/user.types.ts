@@ -97,3 +97,12 @@ export interface UsernameAvailabilityResponseDTO {
   username: string;
   available: boolean;
 }
+
+export interface DiscoverUserDTO {
+  id: string;
+  username: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  bio: string | null;
+  presenceStatus: PresenceStatus;
+}

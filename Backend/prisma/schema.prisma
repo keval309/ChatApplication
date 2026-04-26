@@ -44,38 +44,60 @@ enum VerificationTokenType {
   PASSWORD_RESET
 }
 
+enum ConversationType {
+  DM
+  GROUP
+}
+
+enum ConversationMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  GIF
+  FILE
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // User
 // ─────────────────────────────────────────────────────────────────────────────
 
 model User {
-  id              String         @id @default(cuid())
-  email           String         @unique
-  username        String?        @unique
-  displayName     String?
-  passwordHash    String?
-  avatarUrl       String?
-  statusMessage   String?
-  bio             String?
-  presenceStatus  PresenceStatus @default(OFFLINE)
-  lastSeenAt      DateTime?
-  lastSeenVisible Boolean        @default(true)
-  sendReadReceipts Boolean       @default(true)
+  id                      String            @id @default(cuid())
+  email                   String            @unique
+  username                String?           @unique
+  displayName             String?
+  passwordHash            String?
+  avatarUrl               String?
+  statusMessage           String?
+  bio                     String?
+  presenceStatus          PresenceStatus    @default(OFFLINE)
+  lastSeenAt              DateTime?
+  lastSeenVisible         Boolean           @default(true)
+  sendReadReceipts        Boolean           @default(true)
   globalNotificationLevel NotificationLevel @default(ALL_MESSAGES)
   lastPresenceHeartbeatAt DateTime?
-  autoUnmuteReminder Boolean     @default(false)
-  emailVerifiedAt DateTime?
+  autoUnmuteReminder      Boolean           @default(false)
+  emailVerifiedAt         DateTime?
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  accounts           Account[]
-  sessions           Session[]
-  verificationTokens VerificationToken[]
+  accounts                Account[]
+  sessions                Session[]
+  verificationTokens      VerificationToken[]
   notificationPreferences ConversationNotificationPreference[]
-  blockedUsers       Block[]        @relation("user_blocks")
-  blockedByUsers     Block[]        @relation("user_blocked_by")
+  blockedUsers            Block[]                              @relation("user_blocks")
+  blockedByUsers          Block[]                              @relation("user_blocked_by")
+  conversationMembers     ConversationMember[]
+  sentMessages            Message[]                            @relation("user_sent_messages")
+  reactions               Reaction[]
+  readReceipts            ReadReceipt[]
 
   @@index([email])
   @@index([username])
@@ -135,12 +157,12 @@ model Session {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model VerificationToken {
-  id          String                @id @default(cuid())
-  userId      String
-  tokenHash   String                @unique
-  type        VerificationTokenType
-  expiresAt   DateTime
-  consumedAt  DateTime?
+  id         String                @id @default(cuid())
+  userId     String
+  tokenHash  String                @unique
+  type       VerificationTokenType
+  expiresAt  DateTime
+  consumedAt DateTime?
 
   createdAt DateTime @default(now())
 
@@ -200,4 +222,142 @@ model ConversationNotificationPreference {
   @@index([conversationId])
   @@index([muteUntil])
   @@map("conversation_notification_preferences")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat — Conversation, Message, Reaction, ReadReceipt, MediaAttachment, GroupInfo
+// (Per streamChat-socket-chat.md Part 2 + ChatFlow PRD §15)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Conversation {
+  id         String           @id @default(cuid())
+  type       ConversationType
+  /// userIds who archived this conversation for themselves
+  archivedBy String[]         @default([])
+  /// JSON map of userId → unmuteAt ISO string (null/missing = not muted)
+  mutedBy    Json             @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members   ConversationMember[]
+  messages  Message[]
+  groupInfo GroupInfo?
+
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id             String                 @id @default(cuid())
+  conversationId String
+  userId         String
+  role           ConversationMemberRole @default(MEMBER)
+  joinedAt       DateTime               @default(now())
+  lastReadAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+  @@map("conversation_members")
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String      @db.Text
+  type           MessageType @default(TEXT)
+  /// Self-relation for thread replies; null = top-level
+  parentId       String?
+  editedAt       DateTime?
+  /// Soft delete — messages are never hard-deleted
+  deletedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User              @relation("user_sent_messages", fields: [senderId], references: [id])
+  parent       Message?          @relation("MessageThread", fields: [parentId], references: [id])
+  replies      Message[]         @relation("MessageThread")
+  reactions    Reaction[]
+  readReceipts ReadReceipt[]
+  attachments  MediaAttachment[]
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([senderId])
+  @@index([parentId])
+  @@map("messages")
+}
+
+model Reaction {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// One reaction per user per message — selecting a new emoji REPLACES the old.
+  @@unique([messageId, userId])
+  @@index([messageId])
+  @@index([userId])
+  @@map("reactions")
+}
+
+model ReadReceipt {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  seenAt    DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([messageId])
+  @@index([userId])
+  @@map("read_receipts")
+}
+
+model MediaAttachment {
+  id        String   @id @default(cuid())
+  messageId String
+  url       String
+  mimeType  String
+  sizeBytes Int
+  width     Int?
+  height    Int?
+  blurhash  String?
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("media_attachments")
+}
+
+model GroupInfo {
+  id              String  @id @default(cuid())
+  conversationId  String  @unique
+  name            String
+  description     String?
+  avatarUrl       String?
+  ownerId         String
+  slowModeSeconds Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("group_info")
 }
