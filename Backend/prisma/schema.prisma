@@ -254,6 +254,7 @@ model ConversationMember {
   role           ConversationMemberRole @default(MEMBER)
   joinedAt       DateTime               @default(now())
   lastReadAt     DateTime?
+  unreadCount    Int                    @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -276,6 +277,7 @@ model Message {
   /// Self-relation for thread replies; null = top-level
   parentId       String?
   editedAt       DateTime?
+  deliveredAt    DateTime?
   /// Soft delete — messages are never hard-deleted
   deletedAt      DateTime?
 

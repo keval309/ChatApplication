@@ -10,6 +10,9 @@ export interface ConversationMemberDTO {
     username: string | null;
     displayName: string | null;
     avatarUrl: string | null;
+    presenceStatus?: "ONLINE" | "AWAY" | "DND" | "INVISIBLE" | "OFFLINE";
+    lastSeenAt?: string | Date | null;
+    lastSeenVisible?: boolean;
   };
 }
 

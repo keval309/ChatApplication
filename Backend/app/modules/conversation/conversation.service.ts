@@ -2,6 +2,7 @@ import { ApiException } from "../../utils/errorHandler";
 import { ErrorCodes } from "../../utils/response";
 import { prisma } from "../../client/prisma";
 import * as conversationRepository from "./conversation.repository";
+import { getStatus } from "../../socket/presence";
 import type {
   ConversationListItemDTO,
   ConversationMemberDTO,
@@ -58,6 +59,22 @@ async function projectListItem(args: {
     userId,
     lastReadAt: meMember?.lastReadAt ?? null,
   });
+  const otherUser =
+    row.type === "DM" && otherMember
+      ? (() => {
+          const live = getStatus(otherMember.userId);
+          return {
+            ...otherMember.user,
+            presenceStatus: live.status,
+            lastSeenAt:
+              otherMember.user.lastSeenVisible === false
+                ? null
+                : (live.lastSeen
+                    ? live.lastSeen.toISOString()
+                    : (otherMember.user.lastSeenAt ?? null)),
+          };
+        })()
+      : null;
 
   return {
     id: row.id,
@@ -67,7 +84,7 @@ async function projectListItem(args: {
     members: row.members.map(toMemberDTO),
     lastMessage: toLastMessage(row.messages[0]),
     unreadCount,
-    otherUser: row.type === "DM" && otherMember ? otherMember.user : null,
+    otherUser,
     groupName: row.groupInfo?.name ?? null,
     groupAvatarUrl: row.groupInfo?.avatarUrl ?? null,
     updatedAt: row.updatedAt.toISOString(),

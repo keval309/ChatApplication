@@ -10,6 +10,14 @@ export interface ReceiptUpdateForMessage {
   readBy: Array<{ userId: string; seenAt: string }>;
 }
 
+export async function canSendReadReceipts(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { sendReadReceipts: true },
+  });
+  return user?.sendReadReceipts ?? true;
+}
+
 /**
  * Mark messages as read for a user, in batch. Returns one update per message
  * grouped by sender, so handlers can emit `receipt:update` to each sender's room.
@@ -21,6 +29,9 @@ export async function markRead(args: {
   messageIds: string[];
 }): Promise<ReceiptUpdateForMessage[]> {
   const { userId } = args;
+  const sendReadReceiptsEnabled = await canSendReadReceipts(userId);
+  if (!sendReadReceiptsEnabled) return [];
+
   const messageIds = Array.from(new Set(args.messageIds)).filter(Boolean);
   if (messageIds.length === 0) return [];
   if (messageIds.length > 200) {
@@ -48,10 +59,20 @@ export async function markRead(args: {
     memberConvIds.has(m.conversationId),
   );
   if (allowed.length === 0) return [];
+  const allowedConversationIds = Array.from(
+    new Set(allowed.map((m) => m.conversationId)),
+  );
 
   await receiptRepository.batchCreate({
     userId,
     messageIds: allowed.map((m) => m.id),
+  });
+  await prisma.conversationMember.updateMany({
+    where: {
+      userId,
+      conversationId: { in: allowedConversationIds },
+    },
+    data: { unreadCount: 0, lastReadAt: new Date() },
   });
 
   const allReceipts = await receiptRepository.fetchReceiptsForMessages(

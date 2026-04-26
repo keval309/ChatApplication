@@ -10,6 +10,11 @@ import { ErrorCodes } from "../../utils/response";
 import { isAuthenticated } from "../../middleware/authMiddleware";
 import type { RequestExtended } from "../../interfaces/global";
 import * as userService from "./user.service";
+import { getSocketServer } from "../../socket";
+import {
+  broadcastPresenceToRelevant,
+  setPresenceStatus,
+} from "../../socket/presence";
 import {
   blockUserParamValidator,
   discoverUsersValidator,
@@ -48,6 +53,13 @@ router.patch(
   updateProfileValidator,
   asyncHandler(async (req) => {
     const user = requireUser(req as RequestExtended);
+    const requestedPresence = req.body.presenceStatus as
+      | "ONLINE"
+      | "AWAY"
+      | "DND"
+      | "INVISIBLE"
+      | "OFFLINE"
+      | undefined;
     const profile = await userService.updateProfile(user.id, {
       username: req.body.username,
       displayName: req.body.displayName,
@@ -56,6 +68,17 @@ router.patch(
       bio: req.body.bio,
       presenceStatus: req.body.presenceStatus,
     });
+    if (requestedPresence) {
+      const updatedInMemory = setPresenceStatus(user.id, requestedPresence);
+      if (updatedInMemory) {
+        try {
+          const io = getSocketServer();
+          await broadcastPresenceToRelevant(io, user.id);
+        } catch {
+          // Socket server may not be initialized in tests/bootstrap flows.
+        }
+      }
+    }
     return { user: profile };
   }),
 );
@@ -100,11 +123,12 @@ router.patch(
   updateSettingsValidator,
   asyncHandler(async (req) => {
     const user = requireUser(req as RequestExtended);
+    const nextLastSeenVisible =
+      typeof req.body.lastSeenVisible === "boolean"
+        ? req.body.lastSeenVisible
+        : undefined;
     const settings = await userService.updateSettings(user.id, {
-      lastSeenVisible:
-        typeof req.body.lastSeenVisible === "boolean"
-          ? req.body.lastSeenVisible
-          : undefined,
+      lastSeenVisible: nextLastSeenVisible,
       sendReadReceipts:
         typeof req.body.sendReadReceipts === "boolean"
           ? req.body.sendReadReceipts
@@ -115,6 +139,14 @@ router.patch(
           ? req.body.autoUnmuteReminder
           : undefined,
     });
+    if (typeof nextLastSeenVisible === "boolean") {
+      try {
+        const io = getSocketServer();
+        await broadcastPresenceToRelevant(io, user.id);
+      } catch {
+        // Socket server may not be initialized in tests/bootstrap flows.
+      }
+    }
     return { settings };
   }),
 );

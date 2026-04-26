@@ -56,6 +56,7 @@ function toMessageDTO(row: messageRepository.MessageRow): MessageDTO {
     type: row.type,
     parentId: row.parentId,
     editedAt: row.editedAt ? row.editedAt.toISOString() : null,
+    deliveredAt: row.deliveredAt ? row.deliveredAt.toISOString() : null,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -279,6 +280,48 @@ export async function deleteMessage(
   }
   const row = await messageRepository.softDelete(input.messageId);
   return toMessageDTO(row);
+}
+
+export async function markDelivered(args: {
+  messageId: string;
+  at?: Date;
+}): Promise<MessageDTO> {
+  const row = await messageRepository.setDeliveredAt(
+    args.messageId,
+    args.at ?? new Date(),
+  );
+  return toMessageDTO(row);
+}
+
+export async function catchUpDeliveredForRecipient(args: {
+  recipientId: string;
+  limit?: number;
+}): Promise<
+  Array<{
+    messageId: string;
+    senderId: string;
+    conversationId: string;
+    deliveredAt: string;
+  }>
+> {
+  const pending = await messageRepository.findUndeliveredForRecipient({
+    recipientId: args.recipientId,
+    limit: args.limit ?? 500,
+  });
+  if (pending.length === 0) return [];
+
+  const deliveredAt = new Date();
+  await messageRepository.setDeliveredAtMany({
+    messageIds: pending.map((m) => m.id),
+    at: deliveredAt,
+  });
+
+  return pending.map((m) => ({
+    messageId: m.id,
+    senderId: m.senderId,
+    conversationId: m.conversationId,
+    deliveredAt: deliveredAt.toISOString(),
+  }));
 }
 
 export { toMessageDTO };

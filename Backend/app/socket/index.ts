@@ -2,14 +2,22 @@ import type { Server as HttpServer } from "http";
 import { Server as IOServer } from "socket.io";
 import { env } from "../config/env";
 import { logger } from "../utils/logger";
+import { prisma } from "../client/prisma";
 import { socketAuthMiddleware } from "./auth";
-import { broadcastPresence, markOffline, markOnline } from "./presence";
+import {
+  broadcastPresenceToRelevant,
+  markOffline,
+  markOnlineFromDb,
+} from "./presence";
 import { userRoom } from "./rooms";
 import { registerMessageHandlers } from "./handlers/message";
 import { registerReactionHandlers } from "./handlers/reaction";
 import { registerTypingHandlers } from "./handlers/typing";
 import { registerReceiptHandlers } from "./handlers/receipt";
 import type { AppIOServer, AppSocket } from "./types";
+import { messageService } from "../modules/message";
+import { emitToUser } from "./rooms";
+import { SOCKET_EVENTS } from "./events";
 
 let ioInstance: AppIOServer | null = null;
 
@@ -32,13 +40,23 @@ export function attachSocketIO(httpServer: HttpServer): AppIOServer {
 
   io.use(socketAuthMiddleware);
 
-  io.on("connection", (socket: AppSocket) => {
+  io.on("connection", async (socket: AppSocket) => {
     const { userId } = socket.data.auth;
     socket.join(userRoom(userId));
 
-    const becameOnline = markOnline(userId, socket.id);
+    const becameOnline = await markOnlineFromDb(userId, socket.id);
     if (becameOnline) {
-      broadcastPresence(io, userId);
+      void broadcastPresenceToRelevant(io, userId);
+    }
+    const deliveredUpdates = await messageService.catchUpDeliveredForRecipient({
+      recipientId: userId,
+    });
+    for (const update of deliveredUpdates) {
+      emitToUser(io, update.senderId, SOCKET_EVENTS.MESSAGE_DELIVERED, {
+        messageId: update.messageId,
+        conversationId: update.conversationId,
+        deliveredAt: update.deliveredAt,
+      });
     }
 
     logger.info(
@@ -54,7 +72,12 @@ export function attachSocketIO(httpServer: HttpServer): AppIOServer {
     socket.on("disconnect", (reason) => {
       const becameOffline = markOffline(userId, socket.id);
       if (becameOffline) {
-        broadcastPresence(io, userId);
+        void prisma.user.update({
+          where: { id: userId },
+          data: { lastSeenAt: new Date(), presenceStatus: "OFFLINE" },
+          select: { id: true },
+        });
+        void broadcastPresenceToRelevant(io, userId);
       }
       logger.info(
         `[socket] disconnected user=${userId} sid=${socket.id} reason=${reason}`,

@@ -26,6 +26,7 @@ export interface MessageDTO {
   type: MessageType;
   parentId: string | null;
   editedAt: string | null;
+  deliveredAt: string | null;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;

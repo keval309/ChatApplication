@@ -20,6 +20,8 @@ import {
   setRefreshCookie,
 } from "./auth.cookies";
 import * as authService from "./auth.service";
+import { getSocketServer } from "../../socket";
+import { userRoom } from "../../socket/rooms";
 import {
   buildGoogleAuthorizeUrl,
   generateOAuthState,
@@ -103,13 +105,23 @@ router.post(
 router.post(
   "/logout",
   asyncHandler(async (req, res) => {
+    let userIdForSocketDisconnect: string | null = null;
     const token = req.cookies?.[ACCESS_COOKIE_NAME] as string | undefined;
     if (token) {
       try {
         const payload = verifyAccessToken(token);
+        userIdForSocketDisconnect = payload.sub;
         await authService.logout(payload.sid);
       } catch {
         /* token invalid — still clear cookies */
+      }
+    }
+    if (userIdForSocketDisconnect) {
+      try {
+        const io = getSocketServer();
+        io.in(userRoom(userIdForSocketDisconnect)).disconnectSockets(true);
+      } catch {
+        /* socket server may not be initialized */
       }
     }
     clearAuthCookies(res);

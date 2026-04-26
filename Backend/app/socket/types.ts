@@ -38,6 +38,7 @@ export interface MessageWire {
   type: MessageType;
   parentId: string | null;
   editedAt: string | null;
+  deliveredAt: string | null;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -101,6 +102,12 @@ export interface MessageUpdatedEvent {
   updatedAt: string;
 }
 
+export interface MessageDeliveredEvent {
+  messageId: string;
+  conversationId: string;
+  deliveredAt: string;
+}
+
 export interface MessageDeletedEvent {
   id: string;
   conversationId: string;
@@ -119,9 +126,11 @@ export interface TypingUpdateEvent {
 }
 
 export interface ReceiptUpdateEvent {
-  messageId: string;
   conversationId: string;
-  readBy: ReadReceiptWire[];
+  updates: Array<{
+    messageId: string;
+    readBy: ReadReceiptWire[];
+  }>;
 }
 
 export interface PresenceChangedEvent {
@@ -166,6 +175,7 @@ export interface ClientToServerEvents {
 
 export interface ServerToClientEvents {
   "message:new": (payload: MessageNewEvent) => void;
+  "message:delivered": (payload: MessageDeliveredEvent) => void;
   "message:updated": (payload: MessageUpdatedEvent) => void;
   "message:deleted": (payload: MessageDeletedEvent) => void;
   "reaction:updated": (payload: ReactionUpdatedEvent) => void;

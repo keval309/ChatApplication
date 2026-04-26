@@ -9,6 +9,7 @@ export const messageSelect = {
   type: true,
   parentId: true,
   editedAt: true,
+  deliveredAt: true,
   deletedAt: true,
   createdAt: true,
   updatedAt: true,
@@ -100,5 +101,48 @@ export async function softDelete(messageId: string) {
     where: { id: messageId },
     data: { deletedAt: new Date(), content: "" },
     select: messageSelect,
+  });
+}
+
+export async function setDeliveredAt(messageId: string, at: Date) {
+  return prisma.message.update({
+    where: { id: messageId },
+    data: { deliveredAt: at },
+    select: messageSelect,
+  });
+}
+
+export async function findUndeliveredForRecipient(args: {
+  recipientId: string;
+  limit?: number;
+}) {
+  return prisma.message.findMany({
+    where: {
+      deliveredAt: null,
+      senderId: { not: args.recipientId },
+      conversation: {
+        members: {
+          some: { userId: args.recipientId },
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+    take: args.limit ?? 500,
+    select: {
+      id: true,
+      senderId: true,
+      conversationId: true,
+    },
+  });
+}
+
+export async function setDeliveredAtMany(args: {
+  messageIds: string[];
+  at: Date;
+}): Promise<void> {
+  if (args.messageIds.length === 0) return;
+  await prisma.message.updateMany({
+    where: { id: { in: args.messageIds }, deliveredAt: null },
+    data: { deliveredAt: args.at },
   });
 }

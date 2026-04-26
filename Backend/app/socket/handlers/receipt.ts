@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { logger } from "../../utils/logger";
 import { receiptService } from "../../modules/receipt";
+import * as conversationRepository from "../../modules/conversation/conversation.repository";
 import { SOCKET_EVENTS } from "../events";
 import { emitToUser } from "../rooms";
 import type { AppIOServer, AppSocket } from "../types";
@@ -38,11 +39,19 @@ export function registerReceiptHandlers(
         userId,
         messageIds: ids,
       });
+      const grouped = new Map<
+        string,
+        Array<{ messageId: string; readBy: Array<{ userId: string; seenAt: string }> }>
+      >();
       for (const update of updates) {
-        emitToUser(io, update.senderId, SOCKET_EVENTS.RECEIPT_UPDATE, {
-          messageId: update.messageId,
-          conversationId: update.conversationId,
-          readBy: update.readBy,
+        const arr = grouped.get(update.senderId) ?? [];
+        arr.push({ messageId: update.messageId, readBy: update.readBy });
+        grouped.set(update.senderId, arr);
+      }
+      for (const [senderId, senderUpdates] of grouped.entries()) {
+        emitToUser(io, senderId, SOCKET_EVENTS.RECEIPT_UPDATE, {
+          conversationId,
+          updates: senderUpdates,
         });
       }
     } catch (err) {
@@ -50,9 +59,16 @@ export function registerReceiptHandlers(
     }
   }
 
-  socket.on(SOCKET_EVENTS.RECEIPT_READ, (raw) => {
+  socket.on(SOCKET_EVENTS.RECEIPT_READ, async (raw) => {
     try {
       const payload = readSchema.parse(raw);
+      const isMember = await conversationRepository.isMember({
+        conversationId: payload.conversationId,
+        userId,
+      });
+      if (!isMember) return;
+      const allowed = await receiptService.canSendReadReceipts(userId);
+      if (!allowed) return;
       const buffer =
         buffers.get(payload.conversationId) ??
         ({ ids: new Set<string>(), timer: null } as BufferState);

@@ -4,6 +4,7 @@ import { logger } from "../../utils/logger";
 import * as conversationRepository from "../../modules/conversation/conversation.repository";
 import { messageService, MESSAGE_MAX_LENGTH } from "../../modules/message";
 import type { MessageDTO } from "../../modules/message";
+import { prisma } from "../../client/prisma";
 import { SOCKET_EVENTS } from "../events";
 import { emitToUsers } from "../rooms";
 import type {
@@ -41,6 +42,7 @@ function asWire(msg: MessageDTO, idempotencyKey?: string): MessageWire {
     type: msg.type,
     parentId: msg.parentId,
     editedAt: msg.editedAt,
+    deliveredAt: msg.deliveredAt,
     deletedAt: msg.deletedAt,
     createdAt: msg.createdAt,
     updatedAt: msg.updatedAt,
@@ -94,8 +96,34 @@ export function registerMessageHandlers(
       const memberIds = await conversationRepository.listMemberUserIds(
         payload.conversationId,
       );
+      await prisma.conversationMember.updateMany({
+        where: {
+          conversationId: payload.conversationId,
+          userId: { not: senderId },
+        },
+        data: {
+          unreadCount: {
+            increment: 1,
+          },
+        },
+      });
       const wire = asWire(created, payload.idempotencyKey);
       emitToUsers(io, memberIds, SOCKET_EVENTS.MESSAGE_NEW, wire);
+
+      const recipientIds = memberIds.filter((id) => id !== senderId);
+      const hasConnectedRecipient = recipientIds.some(
+        (id) => io.sockets.adapter.rooms.get(`user:${id}`)?.size,
+      );
+      if (hasConnectedRecipient && !created.deliveredAt) {
+        const delivered = await messageService.markDelivered({
+          messageId: created.id,
+        });
+        emitToUsers(io, [senderId], SOCKET_EVENTS.MESSAGE_DELIVERED, {
+          messageId: delivered.id,
+          conversationId: delivered.conversationId,
+          deliveredAt: delivered.deliveredAt ?? delivered.updatedAt,
+        });
+      }
 
       ack({ ok: true, data: wire });
     } catch (err) {
