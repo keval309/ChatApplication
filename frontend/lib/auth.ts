@@ -2,6 +2,7 @@ import { api, unwrap, API_URL } from "./api";
 import type {
   AuthUser,
   BlockedUser,
+  DiscoverUser,
   ConversationNotificationPreference,
   LoginPayload,
   RegisterPayload,
@@ -125,6 +126,18 @@ export async function blockUser(userId: string): Promise<void> {
 
 export async function unblockUser(userId: string): Promise<void> {
   await api.delete(`/api/user/me/blocked-users/${encodeURIComponent(userId)}`);
+}
+
+export async function discoverUsers(args: {
+  query: string;
+  limit?: number;
+}): Promise<DiscoverUser[]> {
+  const params: Record<string, string | number> = { q: args.query };
+  if (args.limit) params.limit = args.limit;
+  const res = await unwrap<{ users: DiscoverUser[] }>(
+    api.get("/api/user/discover", { params }),
+  );
+  return res.users;
 }
 
 export async function uploadAvatar(file: File): Promise<{ avatarUrl: string }> {

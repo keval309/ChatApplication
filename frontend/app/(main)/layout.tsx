@@ -1,9 +1,17 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useMe } from "@/hooks/useAuth";
 import { Spinner } from "@/components/ui/Spinner";
+import { AppShell } from "@/components/chat/AppShell";
+
+/**
+ * Authenticated shell. Routes that should bypass the chat shell (settings,
+ * onboarding) still get the AppShell wrapping; AppShell renders only the nav
+ * rail / bottom bar when the route isn't /chat.
+ */
+const NON_SHELL_ROUTES = new Set(["/onboarding"]);
 
 export default function MainLayout({
   children,
@@ -11,6 +19,7 @@ export default function MainLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const pathname = usePathname() ?? "";
   const { data, isLoading, isError } = useMe();
 
   React.useEffect(() => {
@@ -26,5 +35,9 @@ export default function MainLayout({
     );
   }
 
-  return <>{children}</>;
+  if (NON_SHELL_ROUTES.has(pathname)) {
+    return <>{children}</>;
+  }
+
+  return <AppShell>{children}</AppShell>;
 }

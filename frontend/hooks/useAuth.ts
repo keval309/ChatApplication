@@ -9,10 +9,13 @@ import {
 } from "@tanstack/react-query";
 import * as authApi from "@/lib/auth";
 import { extractErrorMessage } from "@/lib/api";
+import { disconnectSocket } from "@/lib/socket";
+import { usePresenceStore } from "@/stores/presence-store";
 import type {
   AuthUser,
   BlockedUser,
   ConversationNotificationPreference,
+  DiscoverUser,
   LoginPayload,
   NotificationLevel,
   RegisterPayload,
@@ -32,6 +35,7 @@ export const CONVERSATION_PREFERENCES_QUERY_KEY = [
   "user",
   "conversation-preferences",
 ] as const;
+export const DISCOVER_USERS_QUERY_KEY = ["user", "discover"] as const;
 
 export function useMe(options?: { enabled?: boolean }): UseQueryResult<AuthUser> {
   return useQuery<AuthUser>({
@@ -64,6 +68,8 @@ export function useLogout(): UseMutationResult<void, Error, void> {
   return useMutation({
     mutationFn: () => authApi.logout(),
     onSettled: () => {
+      disconnectSocket();
+      usePresenceStore.getState().clear();
       qc.setQueryData(ME_QUERY_KEY, null);
       qc.removeQueries({ queryKey: ME_QUERY_KEY });
       qc.removeQueries({ queryKey: SESSIONS_QUERY_KEY });
@@ -152,6 +158,16 @@ export function useUpdateUserSettings(): UseMutationResult<
       authApi.updateUserSettings(payload),
     onSuccess: (settings) => {
       qc.setQueryData(SETTINGS_QUERY_KEY, settings);
+      qc.setQueryData<AuthUser>(ME_QUERY_KEY, (prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          lastSeenVisible: settings.lastSeenVisible,
+          sendReadReceipts: settings.sendReadReceipts,
+          globalNotificationLevel: settings.globalNotificationLevel,
+          autoUnmuteReminder: settings.autoUnmuteReminder,
+        };
+      });
     },
   });
 }
@@ -163,6 +179,19 @@ export function useUsernameAvailability(): UseMutationResult<
 > {
   return useMutation({
     mutationFn: (username: string) => authApi.checkUsernameAvailability(username),
+  });
+}
+
+export function useDiscoverUsers(
+  query: string,
+  options?: { enabled?: boolean; limit?: number },
+): UseQueryResult<DiscoverUser[]> {
+  const q = query.trim();
+  return useQuery<DiscoverUser[]>({
+    queryKey: [...DISCOVER_USERS_QUERY_KEY, q, options?.limit ?? 20],
+    queryFn: () => authApi.discoverUsers({ query: q, limit: options?.limit ?? 20 }),
+    enabled: (options?.enabled ?? true) && q.length >= 2,
+    staleTime: 15_000,
   });
 }
 

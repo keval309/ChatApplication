@@ -103,3 +103,12 @@ export interface Session {
   expiresAt: string;
   isCurrent: boolean;
 }
+
+export interface DiscoverUser {
+  id: string;
+  username: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  bio: string | null;
+  presenceStatus: PresenceStatus;
+}
