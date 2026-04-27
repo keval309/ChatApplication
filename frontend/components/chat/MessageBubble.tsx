@@ -172,8 +172,9 @@ export function MessageBubble({
 
   return (
     <div
+      id={`msg-${message.id}`}
       data-message-id={message.id}
-      className={cn("flex items-end gap-2 px-3 group", isOwn ? "flex-row-reverse" : "flex-row")}
+      className={cn("flex items-end gap-2 px-3 group scroll-mt-4", isOwn ? "flex-row-reverse" : "flex-row")}
       onMouseEnter={() => setActionsVisible(true)}
       onMouseLeave={() => setActionsVisible(false)}
       onPointerDown={onPointerDown}

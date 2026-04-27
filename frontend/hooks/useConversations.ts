@@ -36,6 +36,46 @@ import { messagesQueryKey } from "./useMessages";
 export const conversationsQueryKey = (filter: ConversationFilter) =>
   ["conversations", filter] as const;
 
+/** Matches API order: pinned (for you) first, then `updatedAt` desc, then id desc. */
+function sortConversationsByInboxOrder(
+  items: ConversationListItem[],
+): ConversationListItem[] {
+  return [...items].sort((a, b) => {
+    const pinA = a.pinnedByMe ? 1 : 0;
+    const pinB = b.pinnedByMe ? 1 : 0;
+    if (pinA !== pinB) return pinB - pinA;
+    const tA = new Date(a.updatedAt).getTime();
+    const tB = new Date(b.updatedAt).getTime();
+    if (tA !== tB) return tB - tA;
+    return b.id.localeCompare(a.id);
+  });
+}
+
+function resortFirstPageAllFilters(
+  qc: ReturnType<typeof useQueryClient>,
+): void {
+  const filters: ConversationFilter[] = ["ALL", "ARCHIVED", "GROUPS"];
+  for (const f of filters) {
+    qc.setQueryData<InfiniteData<ConversationsPage>>(
+      conversationsQueryKey(f),
+      (data) => {
+        if (!data?.pages[0]) return data;
+        const [first, ...rest] = data.pages;
+        return {
+          ...data,
+          pages: [
+            {
+              ...first,
+              conversations: sortConversationsByInboxOrder(first.conversations),
+            },
+            ...rest,
+          ],
+        };
+      },
+    );
+  }
+}
+
 function estimatedMuteUntil(duration: MuteDuration): string | null {
   if (duration === "forever") return null;
   const ms =
@@ -152,7 +192,10 @@ function prependConversationToFilterCache(
         pages: [
           {
             ...first,
-            conversations: [item, ...first.conversations],
+            conversations: sortConversationsByInboxOrder([
+              item,
+              ...first.conversations,
+            ]),
           },
           ...rest,
         ],
@@ -268,6 +311,7 @@ export function useConversations(filter: ConversationFilter = "ALL") {
         unreadCount: msg.senderId === me?.id ? c.unreadCount : c.unreadCount + 1,
         updatedAt: msg.createdAt,
       }));
+      resortFirstPageAllFilters(qc);
     };
 
     const onUpdated = (msg: MessageUpdatedEvent) => {
@@ -414,13 +458,44 @@ export function useGetOrCreateDm() {
             pages: [
               {
                 ...first,
-                conversations: [conversation, ...first.conversations],
+                conversations: sortConversationsByInboxOrder([
+                  conversation,
+                  ...first.conversations.filter(
+                    (c) => c.id !== conversation.id,
+                  ),
+                ]),
               },
               ...rest,
             ],
           };
         },
       );
+    },
+  });
+}
+
+export function useSetConversationPinned() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { id: string; pinned: boolean }) =>
+      chatApi.setConversationPinned(args),
+    onMutate: async (args) => {
+      const snap = captureConversationListsSnapshot(qc);
+      patchConversationAllFilters(qc, args.id, (c) => ({
+        ...c,
+        pinnedByMe: args.pinned,
+      }));
+      resortFirstPageAllFilters(qc);
+      return { snap };
+    },
+    onError: (_err, _args, ctx) => {
+      if (ctx?.snap) {
+        restoreConversationListsSnapshot(qc, ctx.snap);
+      }
+      toast.error("Could not update pin. Try again.");
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ["conversations"] });
     },
   });
 }

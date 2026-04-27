@@ -11,6 +11,7 @@ export const messageSelect = {
   editedAt: true,
   deliveredAt: true,
   deletedAt: true,
+  suppressedForUserIds: true,
   createdAt: true,
   updatedAt: true,
   sender: {

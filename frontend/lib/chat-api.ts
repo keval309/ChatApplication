@@ -76,6 +76,16 @@ export async function unmuteConversation(id: string): Promise<void> {
   await api.patch(`/api/conversations/${encodeURIComponent(id)}/unmute`);
 }
 
+/** Inbox-only: pin this chat for you (sorts to top); not shared with others. */
+export async function setConversationPinned(args: {
+  id: string;
+  pinned: boolean;
+}): Promise<void> {
+  await api.patch(`/api/conversations/${encodeURIComponent(args.id)}/pin`, {
+    pinned: args.pinned,
+  });
+}
+
 export async function listMessages(args: {
   conversationId: string;
   cursor?: string | null;

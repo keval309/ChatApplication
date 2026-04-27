@@ -11,6 +11,8 @@ import {
   Video,
   MoreVertical,
   AlertCircle,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import * as chatApi from "@/lib/chat-api";
@@ -23,6 +25,7 @@ import {
   useDeleteConversation,
   useMuteConversation,
   useUnmuteConversation,
+  useSetConversationPinned,
   conversationsQueryKey,
 } from "@/hooks/useConversations";
 import { useBlockUser, useUnblockUser } from "@/hooks/useAuth";
@@ -166,6 +169,7 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
   const muteConv = useMuteConversation();
   const unmuteConv = useUnmuteConversation();
   const archiveConv = useArchiveConversation();
+  const setPinConv = useSetConversationPinned();
   const blockUser = useBlockUser();
   const unblockUser = useUnblockUser();
 
@@ -586,6 +590,21 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
     );
   };
 
+  const handleTogglePin = () => {
+    if (!conv) return;
+    const next = !conv.pinnedByMe;
+    setPinConv.mutate(
+      { id: conversationId, pinned: next },
+      {
+        onSuccess: () => {
+          setMoreMenuOpen(false);
+          void conversationQuery.refetch();
+          toast.success(next ? "Chat pinned to top." : "Chat unpinned.");
+        },
+      },
+    );
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full min-h-0 bg-bg relative">
@@ -621,6 +640,8 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
         }}
         onToggleArchive={handleToggleArchive}
         archivePending={archiveConv.isPending}
+        onTogglePin={handleTogglePin}
+        pinPending={setPinConv.isPending}
         mutePending={muteConv.isPending}
         unmutePending={unmuteConv.isPending}
       />
@@ -629,8 +650,10 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
         <div
           className="shrink-0 px-3 py-2 border-b border-border bg-bg-elevated flex flex-wrap items-center justify-between gap-2"
           role="status"
+          aria-live="polite"
+          aria-labelledby="mute-banner-label"
         >
-          <p className="text-xs text-text-muted">
+          <p className="text-xs text-text-muted" id="mute-banner-label">
             You have muted notifications for this chat.
           </p>
           <Button
@@ -638,6 +661,7 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
             variant="ghost"
             loading={unmuteConv.isPending}
             onClick={handleUnmute}
+            aria-label="Unmute notifications for this conversation"
           >
             Unmute
           </Button>
@@ -664,8 +688,10 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
       ) : null}
 
       <div
+        id="messages"
         ref={parentRef}
-        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
+        tabIndex={-1}
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scroll-mt-2 outline-none"
         role="log"
         aria-live="polite"
         aria-relevant="additions"
@@ -844,6 +870,8 @@ function ConversationHeader({
   onBlock,
   onToggleArchive,
   archivePending,
+  onTogglePin,
+  pinPending,
   mutePending,
   unmutePending,
 }: {
@@ -867,6 +895,8 @@ function ConversationHeader({
   onBlock: () => void;
   onToggleArchive: () => void;
   archivePending: boolean;
+  onTogglePin: () => void;
+  pinPending: boolean;
   mutePending: boolean;
   unmutePending: boolean;
 }) {
@@ -999,6 +1029,20 @@ function ConversationHeader({
                 </>
               )}
               <hr className="my-1 border-border" />
+              <button
+                type="button"
+                role="menuitem"
+                disabled={pinPending}
+                onClick={onTogglePin}
+                className="w-full text-left px-3 py-2 text-sm text-text hover:bg-bg-subtle flex items-center gap-2"
+              >
+                {conv?.pinnedByMe ? (
+                  <PinOff className="h-4 w-4 shrink-0" aria-hidden />
+                ) : (
+                  <Pin className="h-4 w-4 shrink-0" aria-hidden />
+                )}
+                {conv?.pinnedByMe ? "Unpin from top" : "Pin to top"}
+              </button>
               <button
                 type="button"
                 role="menuitem"

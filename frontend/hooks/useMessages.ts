@@ -182,7 +182,11 @@ export function useMessages(conversationId: string | null) {
         applyToMessages(data, (msgs) =>
           msgs.map((m) =>
             m.id === e.id
-              ? { ...m, deletedAt: e.deletedAt, content: "" }
+              ? {
+                  ...m,
+                  deletedAt: e.deletedAt,
+                  content: "",
+                }
               : m,
           ),
         ),

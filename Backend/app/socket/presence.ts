@@ -10,7 +10,7 @@ import { emitToUsers } from "./rooms";
  *   offline when ALL their sockets close.
  * - `lastSeen` records the most recent disconnect timestamp.
  *
- * Replace with Redis when scaling out (per ChatFlow PRD §21 / chatflow.mdc §6).
+ * Replace with Redis when scaling out (per ChatFlow PRD §20 / chatflow.mdc §6).
  */
 interface PresenceEntry {
   status: PresenceStatusWire;

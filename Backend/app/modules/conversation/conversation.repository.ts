@@ -3,6 +3,7 @@ import {
   ConversationType,
   ConversationMemberRole,
   type MessageType,
+  type Prisma,
 } from "../../generated/prisma/client";
 
 export type ConversationLastMessagePreviewRow = {
@@ -43,6 +44,7 @@ export function buildConversationListSelect(viewerUserId: string) {
         joinedAt: true,
         lastReadAt: true,
         historyClearedAt: true,
+        pinned: true,
         user: {
           select: {
             id: true,
@@ -61,6 +63,11 @@ export function buildConversationListSelect(viewerUserId: string) {
   } as const;
 }
 
+/** Row shape from `buildConversationListSelect` (used for list + getById). */
+export type ConversationListQueryRow = Prisma.ConversationGetPayload<{
+  select: ReturnType<typeof buildConversationListSelect>;
+}>;
+
 /** Lower bound for “visible & unread” counting: after both clear-for-me and last read. */
 function unreadCreatedAfter(
   lastReadAt: Date | null,
@@ -74,12 +81,14 @@ function unreadCreatedAfter(
     : historyClearedAt;
 }
 
-export async function attachLastMessagesForViewer<
-  R extends {
-    id: string;
-    members: Array<{ userId: string; historyClearedAt: Date | null }>;
-  },
->(rows: R[], viewerUserId: string): Promise<Array<R & { messages: ConversationLastMessagePreviewRow[] }>> {
+export async function attachLastMessagesForViewer(
+  rows: ConversationListQueryRow[],
+  viewerUserId: string,
+): Promise<
+  Array<
+    ConversationListQueryRow & { messages: ConversationLastMessagePreviewRow[] }
+  >
+> {
   return Promise.all(
     rows.map(async (row) => {
       const me = row.members.find((m) => m.userId === viewerUserId);
@@ -100,19 +109,25 @@ export async function attachLastMessagesForViewer<
   );
 }
 
-export type ConversationListRow = Awaited<
-  ReturnType<typeof findConversationsForUser>
+type AttachedConvRow = Awaited<
+  ReturnType<typeof attachLastMessagesForViewer>
 >[number];
 
 /**
  * Cursor-paginated list of conversations the user is an **active** member of.
+ * Ordered by: pinned (for you) first, then conversation `updatedAt`.
+ * `cursor` is the **previous page’s last `ConversationMember` id** (opaque to clients).
  */
 export async function findConversationsForUser(args: {
   userId: string;
   cursor?: string | null;
   limit: number;
   filter: "ALL" | "ARCHIVED" | "GROUPS";
-}) {
+}): Promise<{
+  rows: AttachedConvRow[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}> {
   const { userId, cursor, limit, filter } = args;
 
   const baseWhere = {
@@ -127,16 +142,37 @@ export async function findConversationsForUser(args: {
   const typeCondition =
     filter === "GROUPS" ? { type: ConversationType.GROUP } : {};
 
-  const raw = await prisma.conversation.findMany({
-    where: { ...baseWhere, ...archiveCondition, ...typeCondition },
-    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  const memberRows = await prisma.conversationMember.findMany({
+    where: {
+      userId,
+      leftAt: null,
+      conversation: { ...baseWhere, ...archiveCondition, ...typeCondition },
+    },
+    orderBy: [
+      { pinned: "desc" },
+      { conversation: { updatedAt: "desc" } },
+      { id: "desc" },
+    ],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    select: buildConversationListSelect(userId),
+    include: {
+      conversation: { select: buildConversationListSelect(userId) },
+    },
   });
 
-  return attachLastMessagesForViewer(raw, userId);
+  const hasMore = memberRows.length > limit;
+  const trimmedMembers = hasMore
+    ? memberRows.slice(0, limit)
+    : memberRows;
+  const lastMember = trimmedMembers[trimmedMembers.length - 1];
+  const nextCursor = hasMore && lastMember ? lastMember.id : null;
+
+  const raw = trimmedMembers.map((m) => m.conversation);
+  const rows = await attachLastMessagesForViewer(raw, userId);
+  return { rows, nextCursor, hasMore };
 }
+
+export type ConversationListRow = AttachedConvRow;
 
 export async function countUnreadForMember(args: {
   conversationId: string;
@@ -232,6 +268,22 @@ export async function listMemberUserIds(
     select: { userId: true },
   });
   return rows.map((r) => r.userId);
+}
+
+export async function setMemberPinned(args: {
+  conversationId: string;
+  userId: string;
+  pinned: boolean;
+}): Promise<void> {
+  await prisma.conversationMember.update({
+    where: {
+      conversationId_userId: {
+        conversationId: args.conversationId,
+        userId: args.userId,
+      },
+    },
+    data: { pinned: args.pinned },
+  });
 }
 
 export async function setArchived(args: {

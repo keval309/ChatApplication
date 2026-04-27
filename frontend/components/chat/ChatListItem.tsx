@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useGesture } from "@use-gesture/react";
-import { BellOff, Archive } from "lucide-react";
+import { BellOff, Archive, Pin } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { ConversationListItem as Conversation } from "@/types/chat";
 import { Avatar } from "./Avatar";
@@ -99,15 +99,10 @@ export function ChatListItem({
       lastSeenAt: other.lastSeenAt ?? null,
       lastSeenVisible: other.lastSeenVisible,
     });
-  }, [
-    conversation.type,
-    conversation.otherUser?.id,
-    conversation.otherUser?.presenceStatus,
-    conversation.otherUser?.lastSeenAt,
-    conversation.otherUser?.lastSeenVisible,
-  ]);
+  }, [conversation.type, conversation.otherUser]);
 
   const muted = conversation.isMuted;
+  const pinned = Boolean(conversation.pinnedByMe);
 
   const bind = useGesture(
     {
@@ -180,18 +175,30 @@ export function ChatListItem({
         </div>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p
-              className={cn(
-                "truncate text-sm",
-                conversation.unreadCount > 0
-                  ? "text-text font-semibold"
-                  : "text-text font-medium",
-              )}
-            >
-              {display}
-            </p>
-            <span className="ml-auto shrink-0 text-xs text-text-muted tabular-nums">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              <p
+                className={cn(
+                  "truncate text-sm",
+                  conversation.unreadCount > 0
+                    ? "text-text font-semibold"
+                    : "text-text font-medium",
+                )}
+              >
+                {display}
+              </p>
+              {pinned ? (
+                <span className="shrink-0 text-primary" title="Pinned">
+                  <Pin
+                    className="h-3.5 w-3.5"
+                    strokeWidth={2.5}
+                    aria-hidden
+                  />
+                  <span className="sr-only">Pinned to top</span>
+                </span>
+              ) : null}
+            </div>
+            <span className="shrink-0 text-xs text-text-muted tabular-nums">
               {conversation.lastMessage
                 ? formatRelativeTime(conversation.lastMessage.createdAt)
                 : ""}

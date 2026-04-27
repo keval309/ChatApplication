@@ -33,7 +33,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const hasActiveChat = Boolean(params?.id);
 
   return (
-    <div className="h-dvh w-full flex bg-bg text-text overflow-hidden">
+    <div className="relative h-dvh w-full flex bg-bg text-text overflow-hidden">
+      {isChatRoute && hasActiveChat ? (
+        <a
+          href="#messages"
+          className={cn(
+            "absolute left-3 top-0 z-[200] -translate-y-full",
+            "px-3 py-2 text-sm font-medium",
+            "rounded-b-xl border border-t-0 border-border bg-bg-elevated text-text",
+            "focus:translate-y-0 focus:outline-none focus:ring-2 focus:ring-primary",
+            "transition-transform duration-150",
+          )}
+        >
+          Skip to messages
+        </a>
+      ) : null}
       <Sidebar />
 
       {isChatRoute ? (

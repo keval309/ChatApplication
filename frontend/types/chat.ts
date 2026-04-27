@@ -37,6 +37,8 @@ export interface ConversationListItem {
   id: string;
   type: ConversationType;
   isArchived: boolean;
+  /** Your inbox only: you pinned this chat; not shared with the other participant. */
+  pinnedByMe?: boolean;
   isMuted: boolean;
   muteUntil: string | null;
   members: ConversationMember[];

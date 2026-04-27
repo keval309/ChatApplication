@@ -14,6 +14,7 @@ import {
   getOrCreateDmValidator,
   listConversationsValidator,
   muteConversationValidator,
+  setConversationPinnedValidator,
 } from "./conversation.validator";
 
 const router = Router();
@@ -156,6 +157,20 @@ router.patch(
     await conversationService.unmuteConversation({
       userId: user.id,
       conversationId: String(req.params.id),
+    });
+    return { success: true };
+  }),
+);
+
+router.patch(
+  "/:id/pin",
+  setConversationPinnedValidator,
+  asyncHandler(async (req) => {
+    const user = requireUser(req as RequestExtended);
+    await conversationService.setMemberPinned({
+      userId: user.id,
+      conversationId: String(req.params.id),
+      pinned: Boolean(req.body.pinned),
     });
     return { success: true };
   }),

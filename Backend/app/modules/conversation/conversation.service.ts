@@ -177,6 +177,8 @@ async function projectListItem(args: {
     id: row.id,
     type: row.type,
     isArchived: row.archivedBy.includes(userId),
+    /** You pinned this chat in your list; not a shared conversation field. */
+    pinnedByMe: meMember?.pinned ?? false,
     isMuted,
     muteUntil,
     members,
@@ -198,22 +200,18 @@ export async function listForUser(args: {
   filter?: "ALL" | "ARCHIVED" | "GROUPS";
 }): Promise<ConversationsPageDTO> {
   const filter = args.filter ?? "ALL";
-  const rows = await conversationRepository.findConversationsForUser({
-    userId: args.userId,
-    cursor: args.cursor ?? null,
-    limit: PAGE_SIZE,
-    filter,
-  });
-
-  const hasMore = rows.length > PAGE_SIZE;
-  const trimmed = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
-  const last = trimmed[trimmed.length - 1];
-  const nextCursor = hasMore && last ? last.id : null;
+  const { rows: trimmed, nextCursor, hasMore } =
+    await conversationRepository.findConversationsForUser({
+      userId: args.userId,
+      cursor: args.cursor ?? null,
+      limit: PAGE_SIZE,
+      filter,
+    });
 
   const prefs = await prisma.conversationNotificationPreference.findMany({
     where: {
       userId: args.userId,
-      conversationId: { in: trimmed.map((r) => r.id) },
+      conversationId: { in: trimmed.map((r: { id: string }) => r.id) },
     },
     select: { conversationId: true, isMuted: true, muteUntil: true },
   });
@@ -325,6 +323,29 @@ export async function setArchived(args: {
     });
   }
   await conversationRepository.setArchived(args);
+}
+
+/** Inbox-only: float this chat to the top for this user; other members are unaffected. */
+export async function setMemberPinned(args: {
+  userId: string;
+  conversationId: string;
+  pinned: boolean;
+}): Promise<void> {
+  const isMember = await conversationRepository.isMember({
+    conversationId: args.conversationId,
+    userId: args.userId,
+  });
+  if (!isMember) {
+    throw new ApiException({
+      ...ErrorCodes.FORBIDDEN,
+      errorDescription: "You are not a member of this conversation",
+    });
+  }
+  await conversationRepository.setMemberPinned({
+    conversationId: args.conversationId,
+    userId: args.userId,
+    pinned: args.pinned,
+  });
 }
 
 export async function markRead(args: {

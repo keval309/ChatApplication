@@ -22,7 +22,7 @@ import type {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // In-memory token bucket for per-user-per-conversation send rate limiting.
-// 30 messages / 60 seconds (PRD §19). Replace with Redis when scaling out.
+// 30 messages / 60 seconds (PRD §18). Replace with Redis when scaling out.
 // ─────────────────────────────────────────────────────────────────────────────
 const rateBuckets: Map<string, number[]> = new Map();
 
@@ -76,7 +76,10 @@ async function loadConvTickContext(
   };
 }
 
-function toMessageDTO(row: messageRepository.MessageRow, allRead: boolean): MessageDTO {
+function toMessageDTO(
+  row: messageRepository.MessageRow,
+  allRead: boolean,
+): MessageDTO {
   return {
     id: row.id,
     conversationId: row.conversationId,

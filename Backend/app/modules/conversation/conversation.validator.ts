@@ -34,3 +34,11 @@ export const muteConversationValidator = [
     .withMessage("autoUnmuteReminder must be a boolean")
     .toBoolean(),
 ];
+
+export const setConversationPinnedValidator = [
+  ...conversationIdParam,
+  body("pinned")
+    .isBoolean()
+    .withMessage("pinned must be a boolean")
+    .toBoolean(),
+];

@@ -133,6 +133,7 @@ export function MessageComposer({
       reactions: [],
       replyCount: 0,
       readBy: [],
+      allRead: false,
       status: "sending",
       tempId,
       idempotencyKey,

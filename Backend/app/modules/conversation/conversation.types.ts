@@ -31,6 +31,11 @@ export interface ConversationListItemDTO {
   id: string;
   type: ConversationType;
   isArchived: boolean;
+  /**
+   * True when **you** pinned this chat in your list (`ConversationMember.pinned`).
+   * Not stored on the conversation; the other person does not see your pin.
+   */
+  pinnedByMe: boolean;
   isMuted: boolean;
   muteUntil: string | null;
   members: ConversationMemberDTO[];

@@ -263,6 +263,8 @@ model ConversationMember {
   historyClearedAt DateTime?
   /// User left/hid this DM for themselves — excluded from active membership
   leftAt         DateTime?
+  /// This user’s inbox only: chat sorted to top for them. Not on `Conversation`; other members don’t see it.
+  pinned         Boolean              @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
