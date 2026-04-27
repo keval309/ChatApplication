@@ -45,10 +45,17 @@ export async function findPage(args: {
   conversationId: string;
   cursor: string | null;
   limit: number;
+  viewerUserId: string;
+  historyClearedAt: Date | null;
 }) {
-  const { conversationId, cursor, limit } = args;
+  const { conversationId, cursor, limit, viewerUserId, historyClearedAt } =
+    args;
   return prisma.message.findMany({
-    where: { conversationId },
+    where: {
+      conversationId,
+      NOT: { suppressedForUserIds: { has: viewerUserId } },
+      ...(historyClearedAt ? { createdAt: { gt: historyClearedAt } } : {}),
+    },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -69,6 +76,7 @@ export async function createMessage(args: {
   content: string;
   type: MessageType;
   parentId: string | null;
+  suppressedForUserIds?: string[];
 }) {
   return prisma.message.create({
     data: {
@@ -77,6 +85,7 @@ export async function createMessage(args: {
       content: args.content,
       type: args.type,
       parentId: args.parentId,
+      suppressedForUserIds: args.suppressedForUserIds ?? [],
     },
     select: messageSelect,
   });
@@ -116,10 +125,20 @@ export async function findUndeliveredForRecipient(args: {
   recipientId: string;
   limit?: number;
 }) {
+  const user = await prisma.user.findUnique({
+    where: { id: args.recipientId },
+    select: { lastSeenAt: true },
+  });
+  const afterDisconnect = user?.lastSeenAt ?? null;
+
   return prisma.message.findMany({
     where: {
       deliveredAt: null,
       senderId: { not: args.recipientId },
+      NOT: { suppressedForUserIds: { has: args.recipientId } },
+      ...(afterDisconnect
+        ? { createdAt: { gt: afterDisconnect } }
+        : {}),
       conversation: {
         members: {
           some: { userId: args.recipientId },
@@ -134,6 +153,12 @@ export async function findUndeliveredForRecipient(args: {
       conversationId: true,
     },
   });
+}
+
+export async function deleteAllInConversation(
+  conversationId: string,
+): Promise<void> {
+  await prisma.message.deleteMany({ where: { conversationId } });
 }
 
 export async function setDeliveredAtMany(args: {

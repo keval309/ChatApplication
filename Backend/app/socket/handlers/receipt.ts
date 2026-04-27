@@ -35,17 +35,28 @@ export function registerReceiptHandlers(
     if (ids.length === 0) return;
 
     try {
+      const canReceipt = await receiptService.canSendReadReceipts(userId);
+      if (!canReceipt) return;
+
       const updates = await receiptService.markRead({
         userId,
         messageIds: ids,
       });
       const grouped = new Map<
         string,
-        Array<{ messageId: string; readBy: Array<{ userId: string; seenAt: string }> }>
+        Array<{
+          messageId: string;
+          readBy: Array<{ userId: string; seenAt: string }>;
+          allRead: boolean;
+        }>
       >();
       for (const update of updates) {
         const arr = grouped.get(update.senderId) ?? [];
-        arr.push({ messageId: update.messageId, readBy: update.readBy });
+        arr.push({
+          messageId: update.messageId,
+          readBy: update.readBy,
+          allRead: update.allRead,
+        });
         grouped.set(update.senderId, arr);
       }
       for (const [senderId, senderUpdates] of grouped.entries()) {

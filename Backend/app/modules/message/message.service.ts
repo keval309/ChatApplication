@@ -2,7 +2,9 @@ import { ApiException } from "../../utils/errorHandler";
 import { ErrorCodes } from "../../utils/response";
 import { prisma } from "../../client/prisma";
 import * as conversationRepository from "../conversation/conversation.repository";
+import { loadBlockMaps } from "../user/block-lookup";
 import * as messageRepository from "./message.repository";
+import { computeAllRead, type ConvTickContext } from "./message-ticks";
 import {
   MESSAGE_EDIT_WINDOW_MS,
   MESSAGE_MAX_LENGTH,
@@ -47,7 +49,34 @@ function checkRateLimit(userId: string, conversationId: string): void {
 // Projection
 // ─────────────────────────────────────────────────────────────────────────────
 
-function toMessageDTO(row: messageRepository.MessageRow): MessageDTO {
+async function loadConvTickContext(
+  conversationId: string,
+): Promise<ConvTickContext> {
+  const c = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: {
+      type: true,
+      members: {
+        select: {
+          userId: true,
+          user: { select: { sendReadReceipts: true } },
+        },
+      },
+    },
+  });
+  if (!c) {
+    return { type: "DM", members: [] };
+  }
+  return {
+    type: c.type,
+    members: c.members.map((m) => ({
+      userId: m.userId,
+      sendReadReceipts: m.user.sendReadReceipts,
+    })),
+  };
+}
+
+function toMessageDTO(row: messageRepository.MessageRow, allRead: boolean): MessageDTO {
   return {
     id: row.id,
     conversationId: row.conversationId,
@@ -66,7 +95,15 @@ function toMessageDTO(row: messageRepository.MessageRow): MessageDTO {
     readBy: row.readReceipts
       .filter((r) => r.userId !== row.senderId)
       .map((r) => ({ userId: r.userId, seenAt: r.seenAt.toISOString() })),
+    allRead,
   };
+}
+
+async function rowToDto(
+  row: messageRepository.MessageRow,
+): Promise<MessageDTO> {
+  const ctx = await loadConvTickContext(row.conversationId);
+  return toMessageDTO(row, computeAllRead(row, ctx));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,43 +123,6 @@ export async function assertMember(args: {
   }
 }
 
-/**
- * For DMs: ensure neither user has blocked the other.
- * No-op for groups (block hides messages client-side per PRD §10.1).
- */
-async function assertNotBlocked(args: {
-  conversationId: string;
-  senderId: string;
-}): Promise<void> {
-  const conv = await prisma.conversation.findUnique({
-    where: { id: args.conversationId },
-    select: {
-      type: true,
-      members: { select: { userId: true } },
-    },
-  });
-  if (!conv || conv.type !== "DM") return;
-  const otherUserId = conv.members
-    .map((m) => m.userId)
-    .find((id) => id !== args.senderId);
-  if (!otherUserId) return;
-  const block = await prisma.block.findFirst({
-    where: {
-      OR: [
-        { blockerId: args.senderId, blockedId: otherUserId },
-        { blockerId: otherUserId, blockedId: args.senderId },
-      ],
-    },
-    select: { id: true },
-  });
-  if (block) {
-    throw new ApiException({
-      ...ErrorCodes.FORBIDDEN,
-      errorDescription: "You can't message this person",
-    });
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API used by both REST routes and socket handlers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,19 +137,60 @@ export async function listForConversation(args: {
     conversationId: args.conversationId,
     userId: args.userId,
   });
+  const mem = await prisma.conversationMember.findUnique({
+    where: {
+      conversationId_userId: {
+        conversationId: args.conversationId,
+        userId: args.userId,
+      },
+    },
+    select: { historyClearedAt: true },
+  });
   const limit = Math.min(args.limit ?? MESSAGE_PAGE_SIZE, 100);
   const rows = await messageRepository.findPage({
     conversationId: args.conversationId,
     cursor: args.cursor ?? null,
     limit,
+    viewerUserId: args.userId,
+    historyClearedAt: mem?.historyClearedAt ?? null,
   });
   const hasMore = rows.length > limit;
   const trimmed = hasMore ? rows.slice(0, limit) : rows;
   const oldest = trimmed[trimmed.length - 1];
   const nextCursor = hasMore && oldest ? oldest.id : null;
 
+  const ctx = await loadConvTickContext(args.conversationId);
+
+  const convBrief = await prisma.conversation.findUnique({
+    where: { id: args.conversationId },
+    select: { type: true, members: { select: { userId: true } } },
+  });
+  let hidePeerAvatarInDm = false;
+  let dmPeerId: string | null = null;
+  if (convBrief?.type === "DM") {
+    dmPeerId =
+      convBrief.members.find((m) => m.userId !== args.userId)?.userId ?? null;
+    if (dmPeerId) {
+      const bm = await loadBlockMaps(args.userId);
+      hidePeerAvatarInDm =
+        bm.iBlockedUserIds.has(dmPeerId) ||
+        bm.blockedMeByUserIds.has(dmPeerId);
+    }
+  }
+
   // Server returns DESC for cursor logic; flip to ASC for direct rendering.
-  const messages = trimmed.map(toMessageDTO).reverse();
+  const messages = trimmed
+    .map((row) => {
+      const dto = toMessageDTO(row, computeAllRead(row, ctx));
+      if (hidePeerAvatarInDm && dmPeerId && row.senderId === dmPeerId) {
+        return {
+          ...dto,
+          sender: { ...dto.sender, avatarUrl: null },
+        };
+      }
+      return dto;
+    })
+    .reverse();
 
   return { messages, nextCursor, hasMore };
 }
@@ -179,10 +220,6 @@ export async function sendMessage(input: SendMessageInput): Promise<MessageDTO> 
     conversationId: input.conversationId,
     userId: input.senderId,
   });
-  await assertNotBlocked({
-    conversationId: input.conversationId,
-    senderId: input.senderId,
-  });
   checkRateLimit(input.senderId, input.conversationId);
 
   if (input.parentId) {
@@ -198,17 +235,95 @@ export async function sendMessage(input: SendMessageInput): Promise<MessageDTO> 
     }
   }
 
+  const convBrief = await prisma.conversation.findUnique({
+    where: { id: input.conversationId },
+    select: {
+      type: true,
+      members: { select: { userId: true } },
+    },
+  });
+  if (!convBrief) {
+    throw new ApiException({
+      ...ErrorCodes.NOT_FOUND,
+      errorDescription: "Conversation not found",
+    });
+  }
+
+  let suppressedForUserIds: string[] = [];
+  if (convBrief.type === "DM") {
+    const peerId = convBrief.members
+      .map((m) => m.userId)
+      .find((id) => id !== input.senderId);
+    if (!peerId) {
+      throw new ApiException({
+        ...ErrorCodes.BAD_REQUEST,
+        errorDescription: "Invalid DM membership",
+      });
+    }
+    const iBlockedThem = await prisma.block.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId: input.senderId,
+          blockedId: peerId,
+        },
+      },
+      select: { id: true },
+    });
+    if (iBlockedThem) {
+      throw new ApiException({
+        ...ErrorCodes.FORBIDDEN,
+        errorDescription:
+          "You blocked this contact. Unblock them to send messages.",
+      });
+    }
+    const theyBlockedMe = await prisma.block.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId: peerId,
+          blockedId: input.senderId,
+        },
+      },
+      select: { id: true },
+    });
+    if (theyBlockedMe) {
+      suppressedForUserIds = [peerId];
+    }
+
+    // Peer "deleted chat" (leftAt) — new incoming message restores the DM in their inbox.
+    const peerMembership = await prisma.conversationMember.findUnique({
+      where: {
+        conversationId_userId: {
+          conversationId: input.conversationId,
+          userId: peerId,
+        },
+      },
+      select: { leftAt: true },
+    });
+    if (peerMembership?.leftAt != null) {
+      await prisma.conversationMember.update({
+        where: {
+          conversationId_userId: {
+            conversationId: input.conversationId,
+            userId: peerId,
+          },
+        },
+        data: { leftAt: null },
+      });
+    }
+  }
+
   const row = await messageRepository.createMessage({
     conversationId: input.conversationId,
     senderId: input.senderId,
     content: trimmed,
     type: input.type,
     parentId: input.parentId ?? null,
+    suppressedForUserIds,
   });
 
   await conversationRepository.touchConversation(input.conversationId);
 
-  return toMessageDTO(row);
+  return rowToDto(row);
 }
 
 export async function editMessage(input: EditMessageInput): Promise<MessageDTO> {
@@ -256,7 +371,7 @@ export async function editMessage(input: EditMessageInput): Promise<MessageDTO> 
     messageId: input.messageId,
     newContent: trimmed,
   });
-  return toMessageDTO(row);
+  return rowToDto(row);
 }
 
 export async function deleteMessage(
@@ -276,10 +391,10 @@ export async function deleteMessage(
     });
   }
   if (existing.deletedAt) {
-    return toMessageDTO(existing);
+    return rowToDto(existing);
   }
   const row = await messageRepository.softDelete(input.messageId);
-  return toMessageDTO(row);
+  return rowToDto(row);
 }
 
 export async function markDelivered(args: {
@@ -290,7 +405,7 @@ export async function markDelivered(args: {
     args.messageId,
     args.at ?? new Date(),
   );
-  return toMessageDTO(row);
+  return rowToDto(row);
 }
 
 export async function catchUpDeliveredForRecipient(args: {
@@ -324,4 +439,4 @@ export async function catchUpDeliveredForRecipient(args: {
   }));
 }
 
-export { toMessageDTO };
+export { toMessageDTO, rowToDto, loadConvTickContext };

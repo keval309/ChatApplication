@@ -1,6 +1,7 @@
 import { ApiException } from "../../utils/errorHandler";
 import { ErrorCodes } from "../../utils/response";
 import { prisma } from "../../client/prisma";
+import { loadBlockMaps, type BlockMaps } from "../user/block-lookup";
 import * as conversationRepository from "./conversation.repository";
 import { getStatus } from "../../socket/presence";
 import type {
@@ -12,13 +13,41 @@ import type {
 
 const PAGE_SIZE = 30;
 
-function readMutedAt(mutedBy: unknown, userId: string): string | null {
-  if (!mutedBy || typeof mutedBy !== "object") return null;
-  const map = mutedBy as Record<string, string | null>;
-  const value = map[userId];
-  if (!value) return null;
-  if (new Date(value).getTime() <= Date.now()) return null;
-  return value;
+function muteExpiresAt(
+  duration: "1h" | "8h" | "1d" | "7d" | "forever",
+): Date | null {
+  const now = Date.now();
+  switch (duration) {
+    case "1h":
+      return new Date(now + 3600_000);
+    case "8h":
+      return new Date(now + 8 * 3600_000);
+    case "1d":
+      return new Date(now + 86400_000);
+    case "7d":
+      return new Date(now + 7 * 86400_000);
+    case "forever":
+      return null;
+    default:
+      return new Date(now + 3600_000);
+  }
+}
+
+function muteStateFromPref(
+  pref:
+    | { isMuted: boolean; muteUntil: Date | null }
+    | null
+    | undefined,
+): { isMuted: boolean; muteUntil: string | null } {
+  if (!pref?.isMuted) return { isMuted: false, muteUntil: null };
+  const now = Date.now();
+  if (pref.muteUntil !== null && pref.muteUntil.getTime() <= now) {
+    return { isMuted: false, muteUntil: null };
+  }
+  return {
+    isMuted: true,
+    muteUntil: pref.muteUntil ? pref.muteUntil.toISOString() : null,
+  };
 }
 
 function toMemberDTO(
@@ -47,41 +76,110 @@ function toLastMessage(
   };
 }
 
+function sanitizePeerForBlockedViewer<
+  T extends {
+    avatarUrl: string | null;
+    presenceStatus: string;
+    lastSeenAt: Date | string | null | undefined;
+    lastSeenVisible?: boolean | null;
+    statusMessage?: string | null;
+    bio?: string | null;
+  },
+>(u: T): T {
+  return {
+    ...u,
+    avatarUrl: null,
+    presenceStatus: "OFFLINE",
+    lastSeenAt: null,
+    lastSeenVisible: false,
+    statusMessage: null,
+    bio: null,
+  };
+}
+
 async function projectListItem(args: {
   row: conversationRepository.ConversationListRow;
   userId: string;
+  notificationPref: {
+    isMuted: boolean;
+    muteUntil: Date | null;
+  } | null;
+  blockMaps: BlockMaps;
 }): Promise<ConversationListItemDTO> {
-  const { row, userId } = args;
+  const { row, userId, notificationPref, blockMaps } = args;
   const meMember = row.members.find((m) => m.userId === userId);
   const otherMember = row.members.find((m) => m.userId !== userId) ?? null;
+
+  let iBlockedOther = false;
+  let otherBlockedMe = false;
+  if (row.type === "DM" && otherMember) {
+    const peerId = otherMember.userId;
+    iBlockedOther = blockMaps.iBlockedUserIds.has(peerId);
+    otherBlockedMe = blockMaps.blockedMeByUserIds.has(peerId);
+  }
+  const dmPeerFullyHidden =
+    row.type === "DM" &&
+    !!otherMember &&
+    (iBlockedOther || otherBlockedMe);
+
   const unreadCount = await conversationRepository.countUnreadForMember({
     conversationId: row.id,
     userId,
     lastReadAt: meMember?.lastReadAt ?? null,
+    historyClearedAt: meMember?.historyClearedAt ?? null,
   });
+  const { isMuted, muteUntil } = muteStateFromPref(notificationPref);
+
   const otherUser =
     row.type === "DM" && otherMember
-      ? (() => {
-          const live = getStatus(otherMember.userId);
-          return {
+      ? dmPeerFullyHidden
+        ? sanitizePeerForBlockedViewer({
             ...otherMember.user,
-            presenceStatus: live.status,
-            lastSeenAt:
-              otherMember.user.lastSeenVisible === false
-                ? null
-                : (live.lastSeen
-                    ? live.lastSeen.toISOString()
-                    : (otherMember.user.lastSeenAt ?? null)),
-          };
-        })()
+            presenceStatus: otherMember.user.presenceStatus ?? "OFFLINE",
+            lastSeenAt: otherMember.user.lastSeenAt,
+          })
+        : (() => {
+            const live = getStatus(otherMember.userId);
+            return {
+              ...otherMember.user,
+              presenceStatus: live.status,
+              lastSeenAt:
+                otherMember.user.lastSeenVisible === false
+                  ? null
+                  : (live.lastSeen
+                      ? live.lastSeen.toISOString()
+                      : (otherMember.user.lastSeenAt ?? null)),
+            };
+          })()
       : null;
+
+  const members: ConversationMemberDTO[] = row.members.map((m) => {
+    const dto = toMemberDTO(m);
+    if (
+      row.type === "DM" &&
+      otherMember &&
+      dmPeerFullyHidden &&
+      m.userId === otherMember.userId
+    ) {
+      return {
+        ...dto,
+        user: sanitizePeerForBlockedViewer({
+          ...dto.user,
+          presenceStatus: dto.user.presenceStatus ?? "OFFLINE",
+          lastSeenAt: dto.user.lastSeenAt,
+        }),
+      };
+    }
+    return dto;
+  });
 
   return {
     id: row.id,
     type: row.type,
     isArchived: row.archivedBy.includes(userId),
-    muteUntil: readMutedAt(row.mutedBy, userId),
-    members: row.members.map(toMemberDTO),
+    isMuted,
+    muteUntil,
+    members,
     lastMessage: toLastMessage(row.messages[0]),
     unreadCount,
     otherUser,
@@ -89,6 +187,8 @@ async function projectListItem(args: {
     groupAvatarUrl: row.groupInfo?.avatarUrl ?? null,
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
+    iBlockedOther,
+    otherBlockedMe,
   };
 }
 
@@ -110,8 +210,31 @@ export async function listForUser(args: {
   const last = trimmed[trimmed.length - 1];
   const nextCursor = hasMore && last ? last.id : null;
 
+  const prefs = await prisma.conversationNotificationPreference.findMany({
+    where: {
+      userId: args.userId,
+      conversationId: { in: trimmed.map((r) => r.id) },
+    },
+    select: { conversationId: true, isMuted: true, muteUntil: true },
+  });
+  const prefByConv = new Map(
+    prefs.map((p) => [
+      p.conversationId,
+      { isMuted: p.isMuted, muteUntil: p.muteUntil },
+    ]),
+  );
+
+  const blockMaps = await loadBlockMaps(args.userId);
+
   const conversations = await Promise.all(
-    trimmed.map((row) => projectListItem({ row, userId: args.userId })),
+    trimmed.map((row) =>
+      projectListItem({
+        row,
+        userId: args.userId,
+        notificationPref: prefByConv.get(row.id) ?? null,
+        blockMaps,
+      }),
+    ),
   );
 
   return { conversations, nextCursor, hasMore };
@@ -140,23 +263,6 @@ export async function getOrCreateDm(args: {
     });
   }
 
-  // Check mutual block (either direction blocks the conversation start)
-  const block = await prisma.block.findFirst({
-    where: {
-      OR: [
-        { blockerId: selfUserId, blockedId: otherUserId },
-        { blockerId: otherUserId, blockedId: selfUserId },
-      ],
-    },
-    select: { id: true },
-  });
-  if (block) {
-    throw new ApiException({
-      ...ErrorCodes.FORBIDDEN,
-      errorDescription: "You cannot message this user",
-    });
-  }
-
   const existing = await conversationRepository.findDmBetween(
     selfUserId,
     otherUserId,
@@ -168,14 +274,39 @@ export async function getOrCreateDm(args: {
     })
   ).id;
 
-  const row = await conversationRepository.findById(id);
+  await prisma.conversationMember.update({
+    where: {
+      conversationId_userId: {
+        conversationId: id,
+        userId: selfUserId,
+      },
+    },
+    data: { leftAt: null },
+  });
+
+  const row = await conversationRepository.findById(id, selfUserId);
   if (!row) {
     throw new ApiException({
       ...ErrorCodes.INTERNAL,
       errorDescription: "Failed to load conversation",
     });
   }
-  return projectListItem({ row, userId: selfUserId });
+  const pref = await prisma.conversationNotificationPreference.findUnique({
+    where: {
+      userId_conversationId: {
+        userId: selfUserId,
+        conversationId: id,
+      },
+    },
+    select: { isMuted: true, muteUntil: true },
+  });
+  const blockMaps = await loadBlockMaps(selfUserId);
+  return projectListItem({
+    row,
+    userId: selfUserId,
+    notificationPref: pref,
+    blockMaps,
+  });
 }
 
 export async function setArchived(args: {
@@ -231,12 +362,232 @@ export async function getById(args: {
       errorDescription: "You are not a member of this conversation",
     });
   }
-  const row = await conversationRepository.findById(args.conversationId);
+  const row = await conversationRepository.findById(
+    args.conversationId,
+    args.userId,
+  );
   if (!row) {
     throw new ApiException({
       ...ErrorCodes.NOT_FOUND,
       errorDescription: "Conversation not found",
     });
   }
-  return projectListItem({ row, userId: args.userId });
+  const pref = await prisma.conversationNotificationPreference.findUnique({
+    where: {
+      userId_conversationId: {
+        userId: args.userId,
+        conversationId: args.conversationId,
+      },
+    },
+    select: { isMuted: true, muteUntil: true },
+  });
+  const blockMaps = await loadBlockMaps(args.userId);
+  return projectListItem({
+    row,
+    userId: args.userId,
+    notificationPref: pref,
+    blockMaps,
+  });
+}
+
+export async function clearHistory(args: {
+  userId: string;
+  conversationId: string;
+}): Promise<{ actorUserId: string }> {
+  const isMember = await conversationRepository.isMember({
+    conversationId: args.conversationId,
+    userId: args.userId,
+  });
+  if (!isMember) {
+    throw new ApiException({
+      ...ErrorCodes.FORBIDDEN,
+      errorDescription: "You are not a member of this conversation",
+    });
+  }
+  const now = new Date();
+  await prisma.conversationMember.update({
+    where: {
+      conversationId_userId: {
+        conversationId: args.conversationId,
+        userId: args.userId,
+      },
+    },
+    data: {
+      historyClearedAt: now,
+      lastReadAt: now,
+      unreadCount: 0,
+    },
+  });
+  await conversationRepository.touchConversation(args.conversationId);
+  return { actorUserId: args.userId };
+}
+
+export type DeleteConversationResult =
+  | {
+      scope: "everyone";
+      conversationId: string;
+      memberIds: string[];
+    }
+  | {
+      scope: "self";
+      conversationId: string;
+      actorUserId: string;
+    };
+
+export async function deleteConversationHard(args: {
+  userId: string;
+  conversationId: string;
+}): Promise<DeleteConversationResult> {
+  const conv = await prisma.conversation.findUnique({
+    where: { id: args.conversationId },
+    select: {
+      type: true,
+      members: { select: { userId: true, role: true, leftAt: true } },
+    },
+  });
+  if (!conv) {
+    throw new ApiException({
+      ...ErrorCodes.NOT_FOUND,
+      errorDescription: "Conversation not found",
+    });
+  }
+  const me = conv.members.find((m) => m.userId === args.userId);
+  if (!me || me.leftAt !== null) {
+    throw new ApiException({
+      ...ErrorCodes.FORBIDDEN,
+      errorDescription: "You are not a member of this conversation",
+    });
+  }
+
+  if (conv.type === "GROUP") {
+    if (me.role === "OWNER") {
+      const activeIds = conv.members
+        .filter((m) => m.leftAt === null)
+        .map((m) => m.userId);
+      await prisma.conversation.delete({ where: { id: args.conversationId } });
+      return {
+        scope: "everyone",
+        conversationId: args.conversationId,
+        memberIds: activeIds,
+      };
+    }
+    const now = new Date();
+    await prisma.conversationMember.update({
+      where: {
+        conversationId_userId: {
+          conversationId: args.conversationId,
+          userId: args.userId,
+        },
+      },
+      data: {
+        historyClearedAt: now,
+        lastReadAt: now,
+        unreadCount: 0,
+        leftAt: now,
+      },
+    });
+    await conversationRepository.touchConversation(args.conversationId);
+    return {
+      scope: "self",
+      conversationId: args.conversationId,
+      actorUserId: args.userId,
+    };
+  }
+
+  const now = new Date();
+  await prisma.conversationMember.update({
+    where: {
+      conversationId_userId: {
+        conversationId: args.conversationId,
+        userId: args.userId,
+      },
+    },
+    data: {
+      historyClearedAt: now,
+      lastReadAt: now,
+      unreadCount: 0,
+      leftAt: now,
+    },
+  });
+  await conversationRepository.touchConversation(args.conversationId);
+  return {
+    scope: "self",
+    conversationId: args.conversationId,
+    actorUserId: args.userId,
+  };
+}
+
+export async function muteConversation(args: {
+  userId: string;
+  conversationId: string;
+  duration: "1h" | "8h" | "1d" | "7d" | "forever";
+  autoUnmuteReminder: boolean;
+}): Promise<void> {
+  const isMember = await conversationRepository.isMember({
+    conversationId: args.conversationId,
+    userId: args.userId,
+  });
+  if (!isMember) {
+    throw new ApiException({
+      ...ErrorCodes.FORBIDDEN,
+      errorDescription: "You are not a member of this conversation",
+    });
+  }
+  const muteUntil = muteExpiresAt(args.duration);
+  const remind =
+    args.duration !== "forever" && args.autoUnmuteReminder;
+  await prisma.conversationNotificationPreference.upsert({
+    where: {
+      userId_conversationId: {
+        userId: args.userId,
+        conversationId: args.conversationId,
+      },
+    },
+    create: {
+      userId: args.userId,
+      conversationId: args.conversationId,
+      isMuted: true,
+      muteUntil,
+      autoUnmuteReminder: remind,
+    },
+    update: {
+      isMuted: true,
+      muteUntil,
+      autoUnmuteReminder: remind,
+    },
+  });
+}
+
+export async function unmuteConversation(args: {
+  userId: string;
+  conversationId: string;
+}): Promise<void> {
+  const isMember = await conversationRepository.isMember({
+    conversationId: args.conversationId,
+    userId: args.userId,
+  });
+  if (!isMember) {
+    throw new ApiException({
+      ...ErrorCodes.FORBIDDEN,
+      errorDescription: "You are not a member of this conversation",
+    });
+  }
+  await prisma.conversationNotificationPreference.upsert({
+    where: {
+      userId_conversationId: {
+        userId: args.userId,
+        conversationId: args.conversationId,
+      },
+    },
+    create: {
+      userId: args.userId,
+      conversationId: args.conversationId,
+      isMuted: false,
+      muteUntil: null,
+    },
+    update: {
+      isMuted: false,
+      muteUntil: null,
+    },
+  });
 }

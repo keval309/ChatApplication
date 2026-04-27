@@ -35,6 +35,8 @@ export interface MessageDTO {
   replyCount: number;
   /** Receipts collected by everyone except the sender. */
   readBy: Array<{ userId: string; seenAt: string }>;
+  /** True when every required reader (excl. sendReadReceipts:false) has read. */
+  allRead: boolean;
 }
 
 export interface MessagesPageDTO {

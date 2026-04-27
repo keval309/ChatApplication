@@ -2,11 +2,14 @@ import { z } from "zod";
 import { ApiException } from "../../utils/errorHandler";
 import { logger } from "../../utils/logger";
 import * as conversationRepository from "../../modules/conversation/conversation.repository";
+import * as dmDelivery from "../../modules/message/dm-delivery";
 import { messageService, MESSAGE_MAX_LENGTH } from "../../modules/message";
 import type { MessageDTO } from "../../modules/message";
 import { prisma } from "../../client/prisma";
+import { shouldEmitNotificationPush } from "../../utils/notification-gate";
 import { SOCKET_EVENTS } from "../events";
-import { emitToUsers } from "../rooms";
+import { hasActiveSocket } from "../presence";
+import { emitToUser, emitToUsers } from "../rooms";
 import type {
   AckResponse,
   AppIOServer,
@@ -49,6 +52,7 @@ function asWire(msg: MessageDTO, idempotencyKey?: string): MessageWire {
     sender: msg.sender,
     reactions: msg.reactions,
     replyCount: msg.replyCount,
+    allRead: msg.allRead,
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 }
@@ -96,33 +100,99 @@ export function registerMessageHandlers(
       const memberIds = await conversationRepository.listMemberUserIds(
         payload.conversationId,
       );
-      await prisma.conversationMember.updateMany({
-        where: {
-          conversationId: payload.conversationId,
-          userId: { not: senderId },
-        },
-        data: {
-          unreadCount: {
-            increment: 1,
+      const unreadTargets = await dmDelivery.getUnreadIncrementUserIds({
+        conversationId: payload.conversationId,
+        senderId,
+        memberUserIds: memberIds,
+      });
+      if (unreadTargets.length > 0) {
+        await prisma.conversationMember.updateMany({
+          where: {
+            conversationId: payload.conversationId,
+            userId: { in: unreadTargets },
           },
-        },
+          data: { unreadCount: { increment: 1 } },
+        });
+      }
+
+      const emitRecipients = await dmDelivery.getMessageNewRecipientIds({
+        conversationId: payload.conversationId,
+        senderId,
+        memberUserIds: memberIds,
       });
       const wire = asWire(created, payload.idempotencyKey);
-      emitToUsers(io, memberIds, SOCKET_EVENTS.MESSAGE_NEW, wire);
+      emitToUsers(io, emitRecipients, SOCKET_EVENTS.MESSAGE_NEW, wire);
 
-      const recipientIds = memberIds.filter((id) => id !== senderId);
-      const hasConnectedRecipient = recipientIds.some(
-        (id) => io.sockets.adapter.rooms.get(`user:${id}`)?.size,
-      );
-      if (hasConnectedRecipient && !created.deliveredAt) {
+      const markDel = await dmDelivery.shouldMarkMessageDelivered({
+        conversationId: payload.conversationId,
+        senderId,
+        memberUserIds: memberIds,
+        hasActiveSocket,
+      });
+      if (markDel && !created.deliveredAt) {
         const delivered = await messageService.markDelivered({
           messageId: created.id,
         });
-        emitToUsers(io, [senderId], SOCKET_EVENTS.MESSAGE_DELIVERED, {
+        emitToUser(io, senderId, SOCKET_EVENTS.MESSAGE_DELIVERED, {
           messageId: delivered.id,
           conversationId: delivered.conversationId,
           deliveredAt: delivered.deliveredAt ?? delivered.updatedAt,
         });
+      }
+
+      const pushTargets = emitRecipients.filter((id) => id !== senderId);
+      if (pushTargets.length > 0) {
+        const now = new Date();
+        const [users, prefs, parentRow] = await Promise.all([
+          prisma.user.findMany({
+            where: { id: { in: pushTargets } },
+            select: {
+              id: true,
+              username: true,
+              globalNotificationLevel: true,
+            },
+          }),
+          prisma.conversationNotificationPreference.findMany({
+            where: {
+              conversationId: payload.conversationId,
+              userId: { in: pushTargets },
+            },
+          }),
+          payload.parentId
+            ? prisma.message.findFirst({
+                where: { id: payload.parentId, deletedAt: null },
+                select: { senderId: true },
+              })
+            : Promise.resolve(null),
+        ]);
+        const userById = new Map(users.map((u) => [u.id, u]));
+        const prefByUser = new Map(prefs.map((p) => [p.userId, p]));
+        for (const uid of pushTargets) {
+          const user = userById.get(uid);
+          if (!user) continue;
+          const pref = prefByUser.get(uid);
+          const muted =
+            pref?.isMuted === true &&
+            (pref.muteUntil === null || pref.muteUntil.getTime() > now.getTime());
+          if (muted) continue;
+          const level = pref?.notificationLevel ?? user.globalNotificationLevel;
+          if (
+            !shouldEmitNotificationPush({
+              level,
+              recipientUsername: user.username,
+              messageContent: wire.content,
+              parentMessageSenderId: parentRow?.senderId ?? null,
+              recipientUserId: uid,
+            })
+          ) {
+            continue;
+          }
+          emitToUser(io, uid, SOCKET_EVENTS.NOTIFICATION_PUSH, {
+            conversationId: wire.conversationId,
+            messageId: wire.id,
+            preview: wire.content.slice(0, 120),
+          });
+        }
       }
 
       ack({ ok: true, data: wire });

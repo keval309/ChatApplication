@@ -33,6 +33,15 @@ export const SOCKET_EVENTS = {
 
   // Presence
   PRESENCE_CHANGED: "presence:changed",
+
+  // Notifications / conversation lifecycle
+  NOTIFICATION_PUSH: "notification:push",
+  NOTIFICATION_UNMUTED: "notification:unmuted",
+  CONVERSATION_HISTORY_CLEARED: "conversation:history-cleared",
+  CONVERSATION_REMOVED_FOR_ME: "conversation:removed-for-me",
+  CONVERSATION_DELETED: "conversation:deleted",
+  CONVERSATION_BLOCKED: "conversation:blocked",
+  CONVERSATION_UNBLOCKED: "conversation:unblocked",
 } as const;
 
 export type SocketEvent = (typeof SOCKET_EVENTS)[keyof typeof SOCKET_EVENTS];

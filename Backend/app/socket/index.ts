@@ -89,8 +89,39 @@ export function attachSocketIO(httpServer: HttpServer): AppIOServer {
     });
   });
 
+  startAutoUnmuteJob(io);
+
   ioInstance = io;
   return io;
+}
+
+function startAutoUnmuteJob(io: AppIOServer): void {
+  setInterval(() => {
+    void (async () => {
+      try {
+        const now = new Date();
+        const due = await prisma.conversationNotificationPreference.findMany({
+          where: {
+            isMuted: true,
+            muteUntil: { not: null, lte: now },
+          },
+        });
+        for (const row of due) {
+          await prisma.conversationNotificationPreference.update({
+            where: { id: row.id },
+            data: { isMuted: false, muteUntil: null },
+          });
+          if (row.autoUnmuteReminder) {
+            emitToUser(io, row.userId, SOCKET_EVENTS.NOTIFICATION_UNMUTED, {
+              conversationId: row.conversationId,
+            });
+          }
+        }
+      } catch (err) {
+        logger.error("[autoUnmute]", err as Error);
+      }
+    })();
+  }, 60_000);
 }
 
 export function getSocketServer(): AppIOServer {

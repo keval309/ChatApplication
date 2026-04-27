@@ -1,6 +1,8 @@
 import { prisma } from "../../client/prisma";
 import { ApiException } from "../../utils/errorHandler";
 import { ErrorCodes } from "../../utils/response";
+import { loadConvTickContext } from "../message/message.service";
+import { computeAllRead } from "../message/message-ticks";
 import * as receiptRepository from "./receipt.repository";
 
 export interface ReceiptUpdateForMessage {
@@ -8,6 +10,7 @@ export interface ReceiptUpdateForMessage {
   conversationId: string;
   senderId: string;
   readBy: Array<{ userId: string; seenAt: string }>;
+  allRead: boolean;
 }
 
 export async function canSendReadReceipts(userId: string): Promise<boolean> {
@@ -42,7 +45,11 @@ export async function markRead(args: {
   }
 
   const messages = await prisma.message.findMany({
-    where: { id: { in: messageIds } },
+    where: {
+      id: { in: messageIds },
+      deletedAt: null,
+      NOT: { suppressedForUserIds: { has: userId } },
+    },
     select: { id: true, conversationId: true, senderId: true },
   });
   const ownedByOthers = messages.filter((m) => m.senderId !== userId);
@@ -87,10 +94,32 @@ export async function markRead(args: {
     byMessage.set(key, arr);
   }
 
-  return allowed.map((m) => ({
-    messageId: m.id,
-    conversationId: m.conversationId,
-    senderId: m.senderId,
-    readBy: (byMessage.get(m.id) ?? []).filter((r) => r.userId !== m.senderId),
-  }));
+  const ctxCache = new Map<string, Awaited<ReturnType<typeof loadConvTickContext>>>();
+  for (const cid of allowedConversationIds) {
+    ctxCache.set(cid, await loadConvTickContext(cid));
+  }
+
+  return allowed.map((m) => {
+    const readList = (byMessage.get(m.id) ?? []).filter(
+      (r) => r.userId !== m.senderId,
+    );
+    const ctx = ctxCache.get(m.conversationId)!;
+    const allRead = computeAllRead(
+      {
+        senderId: m.senderId,
+        readReceipts: readList.map((r) => ({
+          userId: r.userId,
+          seenAt: new Date(r.seenAt),
+        })),
+      },
+      ctx,
+    );
+    return {
+      messageId: m.id,
+      conversationId: m.conversationId,
+      senderId: m.senderId,
+      readBy: readList,
+      allRead,
+    };
+  });
 }

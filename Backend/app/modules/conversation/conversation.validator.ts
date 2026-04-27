@@ -23,3 +23,14 @@ export const archiveConversationValidator = [
     .withMessage("archived must be a boolean")
     .toBoolean(),
 ];
+
+export const muteConversationValidator = [
+  ...conversationIdParam,
+  body("duration")
+    .isIn(["1h", "8h", "1d", "7d", "forever"])
+    .withMessage("duration must be 1h | 8h | 1d | 7d | forever"),
+  body("autoUnmuteReminder")
+    .isBoolean()
+    .withMessage("autoUnmuteReminder must be a boolean")
+    .toBoolean(),
+];

@@ -215,7 +215,8 @@ model ConversationNotificationPreference {
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@unique([userId, conversationId])
   @@index([userId])
@@ -236,13 +237,16 @@ model Conversation {
   archivedBy String[]         @default([])
   /// JSON map of userId → unmuteAt ISO string (null/missing = not muted)
   mutedBy    Json             @default("{}")
+  /// Group dissolution / soft-delete (group phase)
+  deletedAt  DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members   ConversationMember[]
-  messages  Message[]
-  groupInfo GroupInfo?
+  members                 ConversationMember[]
+  messages                Message[]
+  groupInfo               GroupInfo?
+  notificationPreferences ConversationNotificationPreference[]
 
   @@map("conversations")
 }
@@ -255,6 +259,10 @@ model ConversationMember {
   joinedAt       DateTime               @default(now())
   lastReadAt     DateTime?
   unreadCount    Int                    @default(0)
+  /// Messages at or before this time are hidden from this member (clear-for-me).
+  historyClearedAt DateTime?
+  /// User left/hid this DM for themselves — excluded from active membership
+  leftAt         DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -280,6 +288,8 @@ model Message {
   deliveredAt    DateTime?
   /// Soft delete — messages are never hard-deleted
   deletedAt      DateTime?
+  /// DM: user ids who must never see this row (e.g. blocker while blocked party “sends”).
+  suppressedForUserIds String[] @default([])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

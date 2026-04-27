@@ -4,12 +4,16 @@ import { ApiException } from "../../utils/errorHandler";
 import { ErrorCodes } from "../../utils/response";
 import { isAuthenticated } from "../../middleware/authMiddleware";
 import type { RequestExtended } from "../../interfaces/global";
+import { getSocketServer } from "../../socket";
+import { SOCKET_EVENTS } from "../../socket/events";
+import { emitToUser, emitToUsers } from "../../socket/rooms";
 import * as conversationService from "./conversation.service";
 import {
   archiveConversationValidator,
   conversationIdParam,
   getOrCreateDmValidator,
   listConversationsValidator,
+  muteConversationValidator,
 } from "./conversation.validator";
 
 const router = Router();
@@ -52,19 +56,6 @@ router.post(
   }),
 );
 
-router.get(
-  "/:id",
-  conversationIdParam,
-  asyncHandler(async (req) => {
-    const user = requireUser(req as RequestExtended);
-    const conversation = await conversationService.getById({
-      userId: user.id,
-      conversationId: String(req.params.id),
-    });
-    return { conversation };
-  }),
-);
-
 router.post(
   "/:id/archive",
   archiveConversationValidator,
@@ -89,6 +80,97 @@ router.post(
       conversationId: String(req.params.id),
     });
     return { success: true };
+  }),
+);
+
+router.post(
+  "/:id/clear",
+  conversationIdParam,
+  asyncHandler(async (req) => {
+    const user = requireUser(req as RequestExtended);
+    const conversationId = String(req.params.id);
+    const { actorUserId } = await conversationService.clearHistory({
+      userId: user.id,
+      conversationId,
+    });
+    try {
+      const io = getSocketServer();
+      emitToUser(io, actorUserId, SOCKET_EVENTS.CONVERSATION_HISTORY_CLEARED, {
+        conversationId,
+      });
+    } catch {
+      /* socket not initialized (e.g. tests) */
+    }
+    return { success: true };
+  }),
+);
+
+router.delete(
+  "/:id",
+  conversationIdParam,
+  asyncHandler(async (req) => {
+    const user = requireUser(req as RequestExtended);
+    const conversationId = String(req.params.id);
+    const del = await conversationService.deleteConversationHard({
+      userId: user.id,
+      conversationId,
+    });
+    try {
+      const io = getSocketServer();
+      if (del.scope === "everyone") {
+        emitToUsers(io, del.memberIds, SOCKET_EVENTS.CONVERSATION_DELETED, {
+          conversationId,
+        });
+      } else {
+        emitToUser(io, del.actorUserId, SOCKET_EVENTS.CONVERSATION_REMOVED_FOR_ME, {
+          conversationId,
+        });
+      }
+    } catch {
+      /* socket not initialized */
+    }
+    return { success: true };
+  }),
+);
+
+router.patch(
+  "/:id/mute",
+  muteConversationValidator,
+  asyncHandler(async (req) => {
+    const user = requireUser(req as RequestExtended);
+    await conversationService.muteConversation({
+      userId: user.id,
+      conversationId: String(req.params.id),
+      duration: req.body.duration,
+      autoUnmuteReminder: Boolean(req.body.autoUnmuteReminder),
+    });
+    return { success: true };
+  }),
+);
+
+router.patch(
+  "/:id/unmute",
+  conversationIdParam,
+  asyncHandler(async (req) => {
+    const user = requireUser(req as RequestExtended);
+    await conversationService.unmuteConversation({
+      userId: user.id,
+      conversationId: String(req.params.id),
+    });
+    return { success: true };
+  }),
+);
+
+router.get(
+  "/:id",
+  conversationIdParam,
+  asyncHandler(async (req) => {
+    const user = requireUser(req as RequestExtended);
+    const conversation = await conversationService.getById({
+      userId: user.id,
+      conversationId: String(req.params.id),
+    });
+    return { conversation };
   }),
 );
 

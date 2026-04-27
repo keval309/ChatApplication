@@ -45,8 +45,41 @@ export interface MessageWire {
   sender: SenderWire;
   reactions: ReactionWire[];
   replyCount: number;
+  allRead: boolean;
   /** Echoed back so the client can reconcile its optimistic temp. */
   idempotencyKey?: string;
+}
+
+export interface NotificationPushEvent {
+  conversationId: string;
+  messageId: string;
+  preview: string;
+}
+
+export interface NotificationUnmutedEvent {
+  conversationId: string;
+}
+
+export interface ConversationHistoryClearedEvent {
+  conversationId: string;
+}
+
+export interface ConversationDeletedEvent {
+  conversationId: string;
+}
+
+export interface ConversationRemovedForMeEvent {
+  conversationId: string;
+}
+
+export interface ConversationBlockedEvent {
+  conversationId: string | null;
+  blockerId: string;
+}
+
+export interface ConversationUnblockedEvent {
+  conversationId: string | null;
+  blockerId: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -130,6 +163,7 @@ export interface ReceiptUpdateEvent {
   updates: Array<{
     messageId: string;
     readBy: ReadReceiptWire[];
+    allRead: boolean;
   }>;
 }
 
@@ -182,6 +216,13 @@ export interface ServerToClientEvents {
   "typing:update": (payload: TypingUpdateEvent) => void;
   "receipt:update": (payload: ReceiptUpdateEvent) => void;
   "presence:changed": (payload: PresenceChangedEvent) => void;
+  "notification:push": (payload: NotificationPushEvent) => void;
+  "notification:unmuted": (payload: NotificationUnmutedEvent) => void;
+  "conversation:history-cleared": (payload: ConversationHistoryClearedEvent) => void;
+  "conversation:removed-for-me": (payload: ConversationRemovedForMeEvent) => void;
+  "conversation:deleted": (payload: ConversationDeletedEvent) => void;
+  "conversation:blocked": (payload: ConversationBlockedEvent) => void;
+  "conversation:unblocked": (payload: ConversationUnblockedEvent) => void;
 }
 
 export interface InterServerEvents {

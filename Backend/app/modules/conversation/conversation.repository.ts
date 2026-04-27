@@ -2,62 +2,110 @@ import { prisma } from "../../client/prisma";
 import {
   ConversationType,
   ConversationMemberRole,
+  type MessageType,
 } from "../../generated/prisma/client";
 
-const conversationListSelect = {
+export type ConversationLastMessagePreviewRow = {
+  id: string;
+  senderId: string;
+  content: string;
+  type: MessageType;
+  createdAt: Date;
+  deletedAt: Date | null;
+};
+
+const lastMessagePreviewSelect = {
   id: true,
+  senderId: true,
+  content: true,
   type: true,
-  archivedBy: true,
-  mutedBy: true,
   createdAt: true,
-  updatedAt: true,
-  groupInfo: {
-    select: {
-      name: true,
-      avatarUrl: true,
+  deletedAt: true,
+} as const;
+
+export function buildConversationListSelect(viewerUserId: string) {
+  return {
+    id: true,
+    type: true,
+    archivedBy: true,
+    createdAt: true,
+    updatedAt: true,
+    groupInfo: {
+      select: {
+        name: true,
+        avatarUrl: true,
+      },
     },
-  },
-  members: {
-    select: {
-      userId: true,
-      role: true,
-      joinedAt: true,
-      lastReadAt: true,
-      user: {
-        select: {
-          id: true,
-          username: true,
-          displayName: true,
-          avatarUrl: true,
-          presenceStatus: true,
-          lastSeenAt: true,
-          lastSeenVisible: true,
+    members: {
+      select: {
+        userId: true,
+        role: true,
+        joinedAt: true,
+        lastReadAt: true,
+        historyClearedAt: true,
+        user: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            statusMessage: true,
+            bio: true,
+            presenceStatus: true,
+            lastSeenAt: true,
+            lastSeenVisible: true,
+          },
         },
       },
     },
+  } as const;
+}
+
+/** Lower bound for “visible & unread” counting: after both clear-for-me and last read. */
+function unreadCreatedAfter(
+  lastReadAt: Date | null,
+  historyClearedAt: Date | null,
+): Date | undefined {
+  if (!lastReadAt && !historyClearedAt) return undefined;
+  if (!lastReadAt) return historyClearedAt ?? undefined;
+  if (!historyClearedAt) return lastReadAt;
+  return lastReadAt.getTime() >= historyClearedAt.getTime()
+    ? lastReadAt
+    : historyClearedAt;
+}
+
+export async function attachLastMessagesForViewer<
+  R extends {
+    id: string;
+    members: Array<{ userId: string; historyClearedAt: Date | null }>;
   },
-  messages: {
-    orderBy: { createdAt: "desc" as const },
-    take: 1,
-    select: {
-      id: true,
-      senderId: true,
-      content: true,
-      type: true,
-      createdAt: true,
-      deletedAt: true,
-    },
-  },
-} as const;
+>(rows: R[], viewerUserId: string): Promise<Array<R & { messages: ConversationLastMessagePreviewRow[] }>> {
+  return Promise.all(
+    rows.map(async (row) => {
+      const me = row.members.find((m) => m.userId === viewerUserId);
+      const msg = await prisma.message.findFirst({
+        where: {
+          conversationId: row.id,
+          deletedAt: null,
+          NOT: { suppressedForUserIds: { has: viewerUserId } },
+          ...(me?.historyClearedAt
+            ? { createdAt: { gt: me.historyClearedAt } }
+            : {}),
+        },
+        orderBy: { createdAt: "desc" },
+        select: lastMessagePreviewSelect,
+      });
+      return { ...row, messages: msg ? [msg] : [] };
+    }),
+  );
+}
 
 export type ConversationListRow = Awaited<
   ReturnType<typeof findConversationsForUser>
 >[number];
 
 /**
- * Cursor-paginated list of conversations the user is a member of.
- * Cursor = conversation id from the previous page (we order by updatedAt desc,
- * id desc as a stable tiebreaker).
+ * Cursor-paginated list of conversations the user is an **active** member of.
  */
 export async function findConversationsForUser(args: {
   userId: string;
@@ -68,7 +116,7 @@ export async function findConversationsForUser(args: {
   const { userId, cursor, limit, filter } = args;
 
   const baseWhere = {
-    members: { some: { userId } },
+    members: { some: { userId, leftAt: null } },
   } as const;
 
   const archiveCondition =
@@ -79,27 +127,31 @@ export async function findConversationsForUser(args: {
   const typeCondition =
     filter === "GROUPS" ? { type: ConversationType.GROUP } : {};
 
-  return prisma.conversation.findMany({
+  const raw = await prisma.conversation.findMany({
     where: { ...baseWhere, ...archiveCondition, ...typeCondition },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    select: conversationListSelect,
+    select: buildConversationListSelect(userId),
   });
+
+  return attachLastMessagesForViewer(raw, userId);
 }
 
 export async function countUnreadForMember(args: {
   conversationId: string;
   userId: string;
   lastReadAt: Date | null;
+  historyClearedAt: Date | null;
 }): Promise<number> {
-  const { conversationId, userId, lastReadAt } = args;
+  const lower = unreadCreatedAfter(args.lastReadAt, args.historyClearedAt);
   return prisma.message.count({
     where: {
-      conversationId,
-      senderId: { not: userId },
+      conversationId: args.conversationId,
+      senderId: { not: args.userId },
       deletedAt: null,
-      ...(lastReadAt ? { createdAt: { gt: lastReadAt } } : {}),
+      NOT: { suppressedForUserIds: { has: args.userId } },
+      ...(lower ? { createdAt: { gt: lower } } : {}),
     },
   });
 }
@@ -110,7 +162,6 @@ export async function findDmBetween(
 ): Promise<{ id: string } | null> {
   if (userIdA === userIdB) return null;
 
-  // Find DMs where both users are members. Postgres-level join via two `some` clauses.
   const conv = await prisma.conversation.findFirst({
     where: {
       type: ConversationType.DM,
@@ -123,7 +174,6 @@ export async function findDmBetween(
   });
 
   if (!conv) return null;
-  // Defensive: ensure exactly two members are involved (DMs).
   if (conv.members.length !== 2) return null;
   return { id: conv.id };
 }
@@ -147,34 +197,38 @@ export async function createDmConversation(args: {
   });
 }
 
-export async function findById(conversationId: string) {
-  return prisma.conversation.findUnique({
+export async function findById(conversationId: string, viewerUserId: string) {
+  const raw = await prisma.conversation.findUnique({
     where: { id: conversationId },
-    select: conversationListSelect,
+    select: buildConversationListSelect(viewerUserId),
   });
+  if (!raw) return null;
+  const [row] = await attachLastMessagesForViewer([raw], viewerUserId);
+  return row;
 }
 
 export async function isMember(args: {
   conversationId: string;
   userId: string;
 }): Promise<boolean> {
-  const found = await prisma.conversationMember.findUnique({
+  const m = await prisma.conversationMember.findUnique({
     where: {
       conversationId_userId: {
         conversationId: args.conversationId,
         userId: args.userId,
       },
     },
-    select: { id: true },
+    select: { leftAt: true },
   });
-  return !!found;
+  return !!m && m.leftAt === null;
 }
 
+/** Members still in the conversation (not “delete for me” / left). */
 export async function listMemberUserIds(
   conversationId: string,
 ): Promise<string[]> {
   const rows = await prisma.conversationMember.findMany({
-    where: { conversationId },
+    where: { conversationId, leftAt: null },
     select: { userId: true },
   });
   return rows.map((r) => r.userId);

@@ -1,5 +1,9 @@
 import { ApiException } from "../../utils/errorHandler";
 import { ErrorCodes } from "../../utils/response";
+import { getSocketServer } from "../../socket";
+import { SOCKET_EVENTS } from "../../socket/events";
+import { emitToUser } from "../../socket/rooms";
+import * as conversationRepository from "../conversation/conversation.repository";
 import * as userRepository from "./user.repository";
 import type {
   BlockedUserResponseDTO,
@@ -133,6 +137,16 @@ export async function blockUser(
   const existing = await userRepository.findBlock({ blockerId, blockedId });
   if (existing) return;
   await userRepository.createBlock({ blockerId, blockedId });
+  try {
+    const io = getSocketServer();
+    const dm = await conversationRepository.findDmBetween(blockerId, blockedId);
+    emitToUser(io, blockedId, SOCKET_EVENTS.CONVERSATION_BLOCKED, {
+      conversationId: dm?.id ?? null,
+      blockerId,
+    });
+  } catch {
+    /* Socket not running */
+  }
 }
 
 export async function unblockUser(
@@ -142,6 +156,18 @@ export async function unblockUser(
   const existing = await userRepository.findBlock({ blockerId, blockedId });
   if (!existing) return;
   await userRepository.deleteBlock({ blockerId, blockedId });
+  try {
+    const io = getSocketServer();
+    const dm = await conversationRepository.findDmBetween(blockerId, blockedId);
+    const payload = {
+      conversationId: dm?.id ?? null,
+      blockerId,
+    };
+    emitToUser(io, blockedId, SOCKET_EVENTS.CONVERSATION_UNBLOCKED, payload);
+    emitToUser(io, blockerId, SOCKET_EVENTS.CONVERSATION_UNBLOCKED, payload);
+  } catch {
+    /* Socket not running */
+  }
 }
 
 export async function listSessions(args: {

@@ -10,6 +10,8 @@ export interface ConversationMemberDTO {
     username: string | null;
     displayName: string | null;
     avatarUrl: string | null;
+    statusMessage?: string | null;
+    bio?: string | null;
     presenceStatus?: "ONLINE" | "AWAY" | "DND" | "INVISIBLE" | "OFFLINE";
     lastSeenAt?: string | Date | null;
     lastSeenVisible?: boolean;
@@ -29,6 +31,7 @@ export interface ConversationListItemDTO {
   id: string;
   type: ConversationType;
   isArchived: boolean;
+  isMuted: boolean;
   muteUntil: string | null;
   members: ConversationMemberDTO[];
   lastMessage: LastMessagePreviewDTO | null;
@@ -39,6 +42,10 @@ export interface ConversationListItemDTO {
   groupAvatarUrl: string | null;
   updatedAt: string;
   createdAt: string;
+  /** DM only: set when loaded via getById / getOrCreateDm. */
+  iBlockedOther?: boolean;
+  /** DM only: set when loaded via getById / getOrCreateDm. */
+  otherBlockedMe?: boolean;
 }
 
 export interface ConversationsPageDTO {
