@@ -18,21 +18,34 @@ import type { ConversationListItem, ConversationsPage, Message } from "@/types/c
 import { useMe } from "@/hooks/useAuth";
 import {
   useMarkConversationRead,
+  useArchiveConversation,
+  useClearConversationHistory,
+  useDeleteConversation,
+  useMuteConversation,
+  useUnmuteConversation,
+  conversationsQueryKey,
 } from "@/hooks/useConversations";
-import { conversationsQueryKey } from "@/hooks/useConversations";
-import { useMessages } from "@/hooks/useMessages";
+import { useBlockUser, useUnblockUser } from "@/hooks/useAuth";
+import { useMessages, messagesQueryKey } from "@/hooks/useMessages";
 import { useTyping } from "@/hooks/useTyping";
 import { usePresence, formatLastSeen } from "@/hooks/usePresence";
 import { useSocket } from "@/hooks/useSocket";
 import { SOCKET_EVENTS } from "@/types/socket";
-import type { ReceiptReadPayload } from "@/types/socket";
+import type {
+  ConversationDeletedEvent,
+  ConversationRemovedForMeEvent,
+  ReceiptReadPayload,
+} from "@/types/socket";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { toast } from "@/components/ui/Toaster";
+import type { MuteDuration } from "@/lib/chat-api";
 import { Avatar } from "./Avatar";
 import { PresenceDot } from "./PresenceDot";
 import { MessageBubble } from "./MessageBubble";
 import { MessageComposer } from "./MessageComposer";
 import { TypingIndicator } from "./TypingIndicator";
 import { Button } from "@/components/ui/Button";
-import { usePresenceStore } from "@/stores/presence-store";
+import { seedDmPeerPresenceFromApi } from "@/stores/presence-store";
 
 // ── Item types for the virtual list ──────────────────────────────────────────
 type RenderItem =
@@ -141,13 +154,56 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
   const { data: me } = useMe();
   const { socket, isConnected } = useSocket();
   const queryClient = useQueryClient();
-  const setPresence = usePresenceStore((s) => s.setPresence);
+
+  const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
+  const [confirmClearOpen, setConfirmClearOpen] = React.useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
+  const [confirmBlockOpen, setConfirmBlockOpen] = React.useState(false);
+  const moreMenuRef = React.useRef<HTMLDivElement | null>(null);
+
+  const clearHistory = useClearConversationHistory();
+  const deleteConv = useDeleteConversation();
+  const muteConv = useMuteConversation();
+  const unmuteConv = useUnmuteConversation();
+  const archiveConv = useArchiveConversation();
+  const blockUser = useBlockUser();
+  const unblockUser = useUnblockUser();
 
   const conversationQuery = useQuery<ConversationListItem>({
     queryKey: ["conversation", conversationId],
     queryFn: () => chatApi.getConversation(conversationId),
     staleTime: 60_000,
   });
+
+  React.useEffect(() => {
+    if (!socket) return;
+    const onDeleted = (e: ConversationDeletedEvent) => {
+      if (e.conversationId !== conversationId) return;
+      toast("This conversation was deleted.");
+      router.push("/chat");
+    };
+    const onRemovedForMe = (e: ConversationRemovedForMeEvent) => {
+      if (e.conversationId !== conversationId) return;
+      toast("This chat was removed from your inbox.");
+      router.push("/chat");
+    };
+    socket.on(SOCKET_EVENTS.CONVERSATION_DELETED, onDeleted);
+    socket.on(SOCKET_EVENTS.CONVERSATION_REMOVED_FOR_ME, onRemovedForMe);
+    return () => {
+      socket.off(SOCKET_EVENTS.CONVERSATION_DELETED, onDeleted);
+      socket.off(SOCKET_EVENTS.CONVERSATION_REMOVED_FOR_ME, onRemovedForMe);
+    };
+  }, [socket, conversationId, router]);
+
+  React.useEffect(() => {
+    if (!moreMenuOpen) return;
+    const onDoc = (ev: MouseEvent) => {
+      const el = moreMenuRef.current;
+      if (el && !el.contains(ev.target as Node)) setMoreMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [moreMenuOpen]);
 
   const {
     messages,
@@ -390,22 +446,29 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
   const otherUser = conv?.otherUser ?? null;
   React.useEffect(() => {
     if (!otherUser?.id) return;
-    if (!otherUser.presenceStatus) return;
-    setPresence(otherUser.id, {
-      status: otherUser.presenceStatus,
-      lastSeen:
-        otherUser.lastSeenVisible === false
-          ? null
-          : (otherUser.lastSeenAt ?? null),
+    seedDmPeerPresenceFromApi({
+      id: otherUser.id,
+      presenceStatus: otherUser.presenceStatus,
+      lastSeenAt: otherUser.lastSeenAt ?? null,
+      lastSeenVisible: otherUser.lastSeenVisible,
     });
   }, [
     otherUser?.id,
     otherUser?.presenceStatus,
     otherUser?.lastSeenAt,
     otherUser?.lastSeenVisible,
-    setPresence,
   ]);
-  const presence = usePresence(otherUser?.id);
+  const presenceLive = usePresence(otherUser?.id);
+  const dmPeerPresenceAndAvatarHidden =
+    conv?.type === "DM" &&
+    Boolean(conv.otherBlockedMe || conv.iBlockedOther);
+  const presence = dmPeerPresenceAndAvatarHidden
+    ? ({ status: "OFFLINE" as const, lastSeen: null })
+    : presenceLive;
+  const peerFirstName =
+    otherUser?.displayName?.split(/\s+/)[0] ??
+    otherUser?.username ??
+    "this contact";
   const headerName =
     conv?.type === "DM"
       ? (otherUser?.displayName ?? otherUser?.username ?? "Conversation")
@@ -415,9 +478,117 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
       ? formatLastSeen(presence)
       : `${conv?.members.length ?? 0} members`;
 
+  const runMute = (duration: MuteDuration) => {
+    muteConv.mutate(
+      { id: conversationId, duration, autoUnmuteReminder: false },
+      {
+        onSuccess: () => {
+          setMoreMenuOpen(false);
+          toast.success("Notifications muted for this chat.");
+        },
+        onError: () => toast.error("Could not mute this chat."),
+      },
+    );
+  };
+
+  const handleUnmute = () => {
+    unmuteConv.mutate(conversationId, {
+      onSuccess: () => {
+        setMoreMenuOpen(false);
+        toast.success("Notifications on for this chat.");
+      },
+      onError: () => toast.error("Could not unmute."),
+    });
+  };
+
+  const deleteConfirmDescription = React.useMemo(() => {
+    if (!conv) return "";
+    if (conv.type === "GROUP") {
+      const role = conv.members.find((m) => m.userId === me?.id)?.role;
+      if (role === "OWNER") {
+        return "This group will be permanently deleted for all members, including all messages. This cannot be undone.";
+      }
+      return "You will leave this group. Your view of the history will be cleared; other members keep the full group.";
+    }
+    return "Your copy of this chat will be cleared and removed from your inbox. If they message you again, you will only see new messages.";
+  }, [conv, me?.id]);
+
+  const handleClearConfirm = () => {
+    clearHistory.mutate(conversationId, {
+      onSuccess: () => {
+        setConfirmClearOpen(false);
+        setMoreMenuOpen(false);
+        void conversationQuery.refetch();
+        void queryClient.invalidateQueries({ queryKey: messagesQueryKey(conversationId) });
+        toast.success("Chat cleared for you.");
+      },
+      onError: () => toast.error("Could not clear chat."),
+    });
+  };
+
+  const handleDeleteConfirm = () => {
+    deleteConv.mutate(conversationId, {
+      onSuccess: () => {
+        setConfirmDeleteOpen(false);
+        setMoreMenuOpen(false);
+        router.push("/chat");
+        const isGroupOwner =
+          conv?.type === "GROUP" &&
+          conv.members.find((m) => m.userId === me?.id)?.role === "OWNER";
+        toast.success(isGroupOwner ? "Group deleted." : "Removed from your chats.");
+      },
+      onError: () => toast.error("Could not delete conversation."),
+    });
+  };
+
+  const handleBlockConfirm = () => {
+    if (!otherUser?.id) return;
+    blockUser.mutate(otherUser.id, {
+      onSuccess: () => {
+        setConfirmBlockOpen(false);
+        setMoreMenuOpen(false);
+        void conversationQuery.refetch();
+        toast.success("User blocked.");
+      },
+      onError: () => toast.error("Could not block user."),
+    });
+  };
+
+  const handleUnblock = () => {
+    if (!otherUser?.id) return;
+    unblockUser.mutate(otherUser.id, {
+      onSuccess: () => {
+        setMoreMenuOpen(false);
+        void conversationQuery.refetch();
+        toast.success("User unblocked.");
+      },
+      onError: () => toast.error("Could not unblock."),
+    });
+  };
+
+  const handleToggleArchive = () => {
+    if (!conv) return;
+    const nextArchived = !conv.isArchived;
+    archiveConv.mutate(
+      { id: conversationId, archived: nextArchived },
+      {
+        onSuccess: () => {
+          setMoreMenuOpen(false);
+          void conversationQuery.refetch();
+          toast.success(
+            nextArchived
+              ? "Chat archived. Find it under Archived."
+              : "Chat moved back to All.",
+          );
+        },
+        onError: () => toast.error("Could not update archive."),
+      },
+    );
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full min-h-0 bg-bg">
+    <div className="flex flex-col h-full min-h-0 bg-bg relative">
       <ConversationHeader
         loading={conversationQuery.isLoading}
         onBack={() => router.push("/chat")}
@@ -428,7 +599,69 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
           conv?.type === "DM" ? presence.status : null
         }
         connected={isConnected}
+        moreMenuOpen={moreMenuOpen}
+        onToggleMore={() => setMoreMenuOpen((o) => !o)}
+        moreMenuRef={moreMenuRef}
+        conv={conv}
+        onMute8h={() => runMute("8h")}
+        onMute1d={() => runMute("1d")}
+        onMuteForever={() => runMute("forever")}
+        onUnmute={handleUnmute}
+        onClearChat={() => {
+          setMoreMenuOpen(false);
+          setConfirmClearOpen(true);
+        }}
+        onDeleteChat={() => {
+          setMoreMenuOpen(false);
+          setConfirmDeleteOpen(true);
+        }}
+        onBlock={() => {
+          setMoreMenuOpen(false);
+          setConfirmBlockOpen(true);
+        }}
+        onToggleArchive={handleToggleArchive}
+        archivePending={archiveConv.isPending}
+        mutePending={muteConv.isPending}
+        unmutePending={unmuteConv.isPending}
       />
+
+      {conv?.isMuted ? (
+        <div
+          className="shrink-0 px-3 py-2 border-b border-border bg-bg-elevated flex flex-wrap items-center justify-between gap-2"
+          role="status"
+        >
+          <p className="text-xs text-text-muted">
+            You have muted notifications for this chat.
+          </p>
+          <Button
+            size="sm"
+            variant="ghost"
+            loading={unmuteConv.isPending}
+            onClick={handleUnmute}
+          >
+            Unmute
+          </Button>
+        </div>
+      ) : null}
+
+      {conv?.type === "DM" && conv.iBlockedOther ? (
+        <div
+          className="shrink-0 px-3 py-2 border-b border-border bg-bg-elevated flex flex-wrap items-center justify-between gap-2"
+          role="status"
+        >
+          <p className="text-xs text-text-muted">
+            Unblock {peerFirstName} to send a message.
+          </p>
+          <Button
+            size="sm"
+            variant="ghost"
+            loading={unblockUser.isPending}
+            onClick={handleUnblock}
+          >
+            Unblock
+          </Button>
+        </div>
+      ) : null}
 
       <div
         ref={parentRef}
@@ -534,7 +767,56 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
 
       <MessageComposer
         conversationId={conversationId}
-        disabled={!isConnected}
+        disabled={
+          !isConnected ||
+          Boolean(conv?.type === "DM" && conv.iBlockedOther)
+        }
+        composerPlaceholder={
+          conv?.type === "DM" && conv.iBlockedOther && isConnected
+            ? `Unblock ${peerFirstName} to send a message.`
+            : undefined
+        }
+      />
+
+      <ConfirmDialog
+        open={confirmClearOpen}
+        title="Clear chat for you?"
+        description="Older messages will be hidden on your devices only. Others in this chat still see the full history."
+        confirmLabel="Clear chat"
+        cancelLabel="Cancel"
+        destructive
+        loading={clearHistory.isPending}
+        onConfirm={handleClearConfirm}
+        onCancel={() => setConfirmClearOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title={
+          conv?.type === "GROUP" &&
+          conv.members.find((m) => m.userId === me?.id)?.role === "OWNER"
+            ? "Delete this group?"
+            : "Remove this chat?"
+        }
+        description={deleteConfirmDescription}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        loading={deleteConv.isPending}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setConfirmDeleteOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmBlockOpen}
+        title="Block this user?"
+        description="They will not receive your chat notifications. You can unblock them later in settings or from this chat."
+        confirmLabel="Block"
+        cancelLabel="Cancel"
+        destructive
+        loading={blockUser.isPending}
+        onConfirm={handleBlockConfirm}
+        onCancel={() => setConfirmBlockOpen(false)}
       />
     </div>
   );
@@ -549,6 +831,21 @@ function ConversationHeader({
   subtitle,
   presenceStatus,
   connected,
+  moreMenuOpen,
+  onToggleMore,
+  moreMenuRef,
+  conv,
+  onMute8h,
+  onMute1d,
+  onMuteForever,
+  onUnmute,
+  onClearChat,
+  onDeleteChat,
+  onBlock,
+  onToggleArchive,
+  archivePending,
+  mutePending,
+  unmutePending,
 }: {
   loading: boolean;
   onBack: () => void;
@@ -557,6 +854,21 @@ function ConversationHeader({
   subtitle: string;
   presenceStatus: import("@/types/auth").PresenceStatus | null;
   connected: boolean;
+  moreMenuOpen: boolean;
+  onToggleMore: () => void;
+  moreMenuRef: React.RefObject<HTMLDivElement | null>;
+  conv: ConversationListItem | undefined;
+  onMute8h: () => void;
+  onMute1d: () => void;
+  onMuteForever: () => void;
+  onUnmute: () => void;
+  onClearChat: () => void;
+  onDeleteChat: () => void;
+  onBlock: () => void;
+  onToggleArchive: () => void;
+  archivePending: boolean;
+  mutePending: boolean;
+  unmutePending: boolean;
 }) {
   return (
     <header className="flex items-center gap-3 px-3 py-2 border-b border-border bg-bg-elevated min-h-14 shrink-0">
@@ -599,24 +911,135 @@ function ConversationHeader({
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
-        {[
-          { icon: Phone, label: "Voice call" },
-          { icon: Video, label: "Video call" },
-          { icon: MoreVertical, label: "Conversation info" },
-        ].map(({ icon: Icon, label }) => (
+        <button
+          type="button"
+          aria-label="Voice call"
+          className={cn(
+            "h-11 w-11 grid place-items-center rounded-full",
+            "text-text-muted hover:bg-bg-subtle",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+          )}
+        >
+          <Phone className="h-5 w-5" />
+        </button>
+        <button
+          type="button"
+          aria-label="Video call"
+          className={cn(
+            "h-11 w-11 grid place-items-center rounded-full",
+            "text-text-muted hover:bg-bg-subtle",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+          )}
+        >
+          <Video className="h-5 w-5" />
+        </button>
+        <div className="relative" ref={moreMenuRef}>
           <button
-            key={label}
             type="button"
-            aria-label={label}
+            aria-label="Conversation actions"
+            aria-expanded={moreMenuOpen}
+            aria-haspopup="menu"
+            onClick={onToggleMore}
             className={cn(
               "h-11 w-11 grid place-items-center rounded-full",
               "text-text-muted hover:bg-bg-subtle",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+              moreMenuOpen && "bg-bg-subtle",
             )}
           >
-            <Icon className="h-5 w-5" />
+            <MoreVertical className="h-5 w-5" />
           </button>
-        ))}
+          {moreMenuOpen && !loading ? (
+            <div
+              role="menu"
+              className={cn(
+                "absolute right-0 top-full mt-1 z-20 min-w-[200px] py-1 rounded-xl",
+                "border border-border bg-bg-elevated shadow-lg",
+              )}
+            >
+              {conv?.isMuted ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={unmutePending}
+                  onClick={onUnmute}
+                  className="w-full text-left px-3 py-2 text-sm text-text hover:bg-bg-subtle"
+                >
+                  Unmute notifications
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={mutePending}
+                    onClick={onMute8h}
+                    className="w-full text-left px-3 py-2 text-sm text-text hover:bg-bg-subtle"
+                  >
+                    Mute 8 hours
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={mutePending}
+                    onClick={onMute1d}
+                    className="w-full text-left px-3 py-2 text-sm text-text hover:bg-bg-subtle"
+                  >
+                    Mute 1 day
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={mutePending}
+                    onClick={onMuteForever}
+                    className="w-full text-left px-3 py-2 text-sm text-text hover:bg-bg-subtle"
+                  >
+                    Mute always
+                  </button>
+                </>
+              )}
+              <hr className="my-1 border-border" />
+              <button
+                type="button"
+                role="menuitem"
+                disabled={archivePending}
+                onClick={onToggleArchive}
+                className="w-full text-left px-3 py-2 text-sm text-text hover:bg-bg-subtle"
+              >
+                {conv?.isArchived ? "Unarchive chat" : "Archive chat"}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={onClearChat}
+                className="w-full text-left px-3 py-2 text-sm text-text hover:bg-bg-subtle"
+              >
+                Clear chat
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={onDeleteChat}
+                className="w-full text-left px-3 py-2 text-sm text-[color:var(--color-error)] hover:bg-bg-subtle"
+              >
+                Delete conversation
+              </button>
+              {conv?.type === "DM" && !conv.iBlockedOther ? (
+                <>
+                  <hr className="my-1 border-border" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={onBlock}
+                    className="w-full text-left px-3 py-2 text-sm text-[color:var(--color-error)] hover:bg-bg-subtle"
+                  >
+                    Block user
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
     </header>
   );

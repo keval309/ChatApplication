@@ -51,6 +51,31 @@ export async function markConversationRead(id: string): Promise<void> {
   await api.post(`/api/conversations/${encodeURIComponent(id)}/read`);
 }
 
+export type MuteDuration = "1h" | "8h" | "1d" | "7d" | "forever";
+
+export async function clearConversationHistory(id: string): Promise<void> {
+  await api.post(`/api/conversations/${encodeURIComponent(id)}/clear`);
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await api.delete(`/api/conversations/${encodeURIComponent(id)}`);
+}
+
+export async function muteConversation(args: {
+  id: string;
+  duration: MuteDuration;
+  autoUnmuteReminder?: boolean;
+}): Promise<void> {
+  await api.patch(`/api/conversations/${encodeURIComponent(args.id)}/mute`, {
+    duration: args.duration,
+    autoUnmuteReminder: args.autoUnmuteReminder ?? false,
+  });
+}
+
+export async function unmuteConversation(id: string): Promise<void> {
+  await api.patch(`/api/conversations/${encodeURIComponent(id)}/unmute`);
+}
+
 export async function listMessages(args: {
   conversationId: string;
   cursor?: string | null;

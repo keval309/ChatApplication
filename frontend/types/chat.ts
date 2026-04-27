@@ -9,6 +9,8 @@ export interface MemberUser {
   username: string | null;
   displayName: string | null;
   avatarUrl: string | null;
+  statusMessage?: string | null;
+  bio?: string | null;
   presenceStatus?: PresenceStatus;
   lastSeenAt?: string | null;
   lastSeenVisible?: boolean;
@@ -35,6 +37,7 @@ export interface ConversationListItem {
   id: string;
   type: ConversationType;
   isArchived: boolean;
+  isMuted: boolean;
   muteUntil: string | null;
   members: ConversationMember[];
   lastMessage: LastMessagePreview | null;
@@ -44,6 +47,10 @@ export interface ConversationListItem {
   groupAvatarUrl: string | null;
   updatedAt: string;
   createdAt: string;
+  /** DM detail: you blocked the other user */
+  iBlockedOther?: boolean;
+  /** DM detail: the other user blocked you */
+  otherBlockedMe?: boolean;
 }
 
 export interface ConversationsPage {
@@ -78,6 +85,8 @@ export interface Message {
   reactions: MessageReaction[];
   replyCount: number;
   readBy: ReadReceiptEntry[];
+  /** Server-computed: all required readers have read (DM / group). */
+  allRead?: boolean;
   /** Local-only fields used during optimistic sends. */
   status?: "sending" | "sent" | "failed";
   tempId?: string;

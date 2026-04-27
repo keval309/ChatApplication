@@ -209,7 +209,11 @@ export function useBlockUser(): UseMutationResult<void, Error, string> {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (userId: string) => authApi.blockUser(userId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: BLOCKED_USERS_QUERY_KEY }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: BLOCKED_USERS_QUERY_KEY });
+      void qc.invalidateQueries({ queryKey: ["conversation"] });
+      void qc.invalidateQueries({ queryKey: ["conversations"] });
+    },
   });
 }
 
@@ -217,7 +221,11 @@ export function useUnblockUser(): UseMutationResult<void, Error, string> {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (userId: string) => authApi.unblockUser(userId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: BLOCKED_USERS_QUERY_KEY }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: BLOCKED_USERS_QUERY_KEY });
+      void qc.invalidateQueries({ queryKey: ["conversation"] });
+      void qc.invalidateQueries({ queryKey: ["conversations"] });
+    },
   });
 }
 

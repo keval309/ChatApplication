@@ -31,6 +31,30 @@ export function getPresence(userId: string): PresenceState {
 }
 
 /**
+ * Hydrate list/header DM peer presence without clobbering a better in-memory
+ * value when the API omits `presenceStatus` (e.g. after tab switches / refetch).
+ */
+export function seedDmPeerPresenceFromApi(peer: {
+  id: string;
+  presenceStatus?: PresenceState["status"] | null;
+  lastSeenAt?: string | null;
+  lastSeenVisible?: boolean | null;
+}): void {
+  const prev = usePresenceStore.getState().presence[peer.id];
+  const status =
+    typeof peer.presenceStatus === "string"
+      ? peer.presenceStatus
+      : (prev?.status ?? "OFFLINE");
+  const lastSeen =
+    peer.lastSeenVisible === false
+      ? null
+      : peer.lastSeenAt !== undefined && peer.lastSeenAt !== null
+        ? peer.lastSeenAt
+        : (prev?.lastSeen ?? null);
+  usePresenceStore.getState().setPresence(peer.id, { status, lastSeen });
+}
+
+/**
  * Format presence for headers / list items per the streamChat doc:
  *   "Online" | "Last seen today at 3:42 PM" | "Last seen yesterday" |
  *   "Last seen Apr 20".

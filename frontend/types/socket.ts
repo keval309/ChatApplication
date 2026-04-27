@@ -25,6 +25,14 @@ export const SOCKET_EVENTS = {
   RECEIPT_UPDATE: "receipt:update",
 
   PRESENCE_CHANGED: "presence:changed",
+
+  NOTIFICATION_PUSH: "notification:push",
+  NOTIFICATION_UNMUTED: "notification:unmuted",
+  CONVERSATION_HISTORY_CLEARED: "conversation:history-cleared",
+  CONVERSATION_REMOVED_FOR_ME: "conversation:removed-for-me",
+  CONVERSATION_DELETED: "conversation:deleted",
+  CONVERSATION_BLOCKED: "conversation:blocked",
+  CONVERSATION_UNBLOCKED: "conversation:unblocked",
 } as const;
 
 export type SocketEventName = (typeof SOCKET_EVENTS)[keyof typeof SOCKET_EVENTS];
@@ -86,6 +94,7 @@ export interface MessageNewEvent {
   };
   reactions: MessageReaction[];
   replyCount: number;
+  allRead: boolean;
   idempotencyKey?: string;
 }
 
@@ -125,7 +134,40 @@ export interface ReceiptUpdateEvent {
   updates: Array<{
     messageId: string;
     readBy: ReadReceiptEntry[];
+    allRead: boolean;
   }>;
+}
+
+export interface NotificationPushEvent {
+  conversationId: string;
+  messageId: string;
+  preview: string;
+}
+
+export interface NotificationUnmutedEvent {
+  conversationId: string;
+}
+
+export interface ConversationHistoryClearedEvent {
+  conversationId: string;
+}
+
+export interface ConversationDeletedEvent {
+  conversationId: string;
+}
+
+export interface ConversationRemovedForMeEvent {
+  conversationId: string;
+}
+
+export interface ConversationBlockedEvent {
+  conversationId: string | null;
+  blockerId: string;
+}
+
+export interface ConversationUnblockedEvent {
+  conversationId: string | null;
+  blockerId: string;
 }
 
 export interface PresenceChangedEvent {
@@ -171,4 +213,11 @@ export interface ServerToClientEvents {
   "typing:update": (payload: TypingUpdateEvent) => void;
   "receipt:update": (payload: ReceiptUpdateEvent) => void;
   "presence:changed": (payload: PresenceChangedEvent) => void;
+  "notification:push": (payload: NotificationPushEvent) => void;
+  "notification:unmuted": (payload: NotificationUnmutedEvent) => void;
+  "conversation:history-cleared": (payload: ConversationHistoryClearedEvent) => void;
+  "conversation:removed-for-me": (payload: ConversationRemovedForMeEvent) => void;
+  "conversation:deleted": (payload: ConversationDeletedEvent) => void;
+  "conversation:blocked": (payload: ConversationBlockedEvent) => void;
+  "conversation:unblocked": (payload: ConversationUnblockedEvent) => void;
 }

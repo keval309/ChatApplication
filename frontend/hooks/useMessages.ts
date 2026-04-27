@@ -48,6 +48,7 @@ function newEventToMessage(e: MessageNewEvent): Message {
     reactions: e.reactions,
     replyCount: e.replyCount,
     readBy: [],
+    allRead: e.allRead,
     status: "sent",
     idempotencyKey: e.idempotencyKey,
   };
@@ -205,16 +206,15 @@ export function useMessages(conversationId: string | null) {
       if (e.conversationId !== conversationId) return;
       qc.setQueryData<InfiniteData<MessagesPage>>(queryKey, (data) =>
         applyToMessages(data, (msgs) =>
-          msgs.map((m) =>
-            e.updates.some((u) => u.messageId === m.id)
-              ? {
-                  ...m,
-                  readBy: dedupeReceipts(
-                    e.updates.find((u) => u.messageId === m.id)?.readBy ?? m.readBy,
-                  ),
-                }
-              : m,
-          ),
+          msgs.map((m) => {
+            const u = e.updates.find((x) => x.messageId === m.id);
+            if (!u) return m;
+            return {
+              ...m,
+              readBy: dedupeReceipts(u.readBy),
+              allRead: u.allRead,
+            };
+          }),
         ),
       );
       const filters = ["ALL", "ARCHIVED", "GROUPS"] as const;
@@ -237,12 +237,21 @@ export function useMessages(conversationId: string | null) {
       }
     };
 
+    const onHistoryCleared = (payload: { conversationId: string }) => {
+      if (payload.conversationId !== conversationId) return;
+      qc.setQueryData<InfiniteData<MessagesPage>>(queryKey, {
+        pages: [{ messages: [], nextCursor: null, hasMore: false }],
+        pageParams: [null],
+      });
+    };
+
     socket.on(SOCKET_EVENTS.MESSAGE_NEW, onNew);
     socket.on(SOCKET_EVENTS.MESSAGE_DELIVERED, onDelivered);
     socket.on(SOCKET_EVENTS.MESSAGE_UPDATED, onUpdated);
     socket.on(SOCKET_EVENTS.MESSAGE_DELETED, onDeleted);
     socket.on(SOCKET_EVENTS.REACTION_UPDATED, onReaction);
     socket.on(SOCKET_EVENTS.RECEIPT_UPDATE, onReceipt);
+    socket.on(SOCKET_EVENTS.CONVERSATION_HISTORY_CLEARED, onHistoryCleared);
 
     return () => {
       socket.off(SOCKET_EVENTS.MESSAGE_NEW, onNew);
@@ -251,6 +260,7 @@ export function useMessages(conversationId: string | null) {
       socket.off(SOCKET_EVENTS.MESSAGE_DELETED, onDeleted);
       socket.off(SOCKET_EVENTS.REACTION_UPDATED, onReaction);
       socket.off(SOCKET_EVENTS.RECEIPT_UPDATE, onReceipt);
+      socket.off(SOCKET_EVENTS.CONVERSATION_HISTORY_CLEARED, onHistoryCleared);
     };
   }, [socket, conversationId, qc]);
 

@@ -11,7 +11,7 @@ import { PresenceDot } from "./PresenceDot";
 import { UnreadBadge } from "./UnreadBadge";
 import { usePresence } from "@/hooks/usePresence";
 import { useArchiveConversation } from "@/hooks/useConversations";
-import { usePresenceStore } from "@/stores/presence-store";
+import { seedDmPeerPresenceFromApi } from "@/stores/presence-store";
 
 interface ChatListItemProps {
   conversation: Conversation;
@@ -66,7 +66,6 @@ export function ChatListItem({
 }: ChatListItemProps) {
   const archiveMut = useArchiveConversation();
   const [swipeX, setSwipeX] = React.useState(0);
-  const setPresence = usePresenceStore((s) => s.setPresence);
 
   const display =
     conversation.type === "DM"
@@ -80,19 +79,25 @@ export function ChatListItem({
       ? conversation.otherUser?.avatarUrl
       : conversation.groupAvatarUrl;
 
-  const presence = usePresence(
+  const presenceLive = usePresence(
     conversation.type === "DM" ? conversation.otherUser?.id : null,
   );
+  const dmPeerPresenceHidden =
+    conversation.type === "DM" &&
+    Boolean(conversation.otherBlockedMe || conversation.iBlockedOther);
+  const presence = dmPeerPresenceHidden
+    ? { status: "OFFLINE" as const, lastSeen: null }
+    : presenceLive;
 
   React.useEffect(() => {
     if (conversation.type !== "DM") return;
     const other = conversation.otherUser;
-    if (!other?.id || !other.presenceStatus) return;
-
-    setPresence(other.id, {
-      status: other.presenceStatus,
-      lastSeen:
-        other.lastSeenVisible === false ? null : (other.lastSeenAt ?? null),
+    if (!other?.id) return;
+    seedDmPeerPresenceFromApi({
+      id: other.id,
+      presenceStatus: other.presenceStatus,
+      lastSeenAt: other.lastSeenAt ?? null,
+      lastSeenVisible: other.lastSeenVisible,
     });
   }, [
     conversation.type,
@@ -100,10 +105,9 @@ export function ChatListItem({
     conversation.otherUser?.presenceStatus,
     conversation.otherUser?.lastSeenAt,
     conversation.otherUser?.lastSeenVisible,
-    setPresence,
   ]);
 
-  const muted = !!conversation.muteUntil;
+  const muted = conversation.isMuted;
 
   const bind = useGesture(
     {

@@ -44,11 +44,14 @@ const EmojiMart = dynamic(() => import("@emoji-mart/react"), {
 interface MessageComposerProps {
   conversationId: string;
   disabled?: boolean;
+  /** Shown when connected; overrides the default "Type a message…". */
+  composerPlaceholder?: string;
 }
 
 export function MessageComposer({
   conversationId,
   disabled,
+  composerPlaceholder,
 }: MessageComposerProps) {
   const { data: me } = useMe();
   const { socket, isConnected } = useSocket();
@@ -259,7 +262,9 @@ export function MessageComposer({
             onKeyDown={onKeyDown}
             onBlur={handleBlur}
             placeholder={
-              isConnected ? "Type a message…" : "Reconnecting…"
+              !isConnected
+                ? "Reconnecting…"
+                : (composerPlaceholder ?? "Type a message…")
             }
             minRows={1}
             maxRows={5}

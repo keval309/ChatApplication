@@ -134,6 +134,10 @@ export function ChatList() {
             );
           })}
         </div>
+        <p className="text-[11px] text-text-muted leading-snug">
+          Tip: swipe left on a chat to archive or unarchive. You can also use
+          the menu (⋮) in an open conversation.
+        </p>
       </div>
 
       <div className="flex-1 overflow-y-auto" role="region" aria-label="Conversation list">

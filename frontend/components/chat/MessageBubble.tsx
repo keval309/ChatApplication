@@ -161,10 +161,14 @@ export function MessageBubble({
   // ── Delivery / read state for own messages ───────────────────────────────
   const otherMembers = members.filter((m) => m.userId !== me?.id);
   const readCount = message.readBy.filter((r) => r.userId !== me?.id).length;
-  const allRead = otherMembers.length > 0 && readCount >= otherMembers.length;
   const readByOthers = message.readBy.some(
     (r) => r.userId !== (me?.id ?? "") && r.userId !== message.senderId,
   );
+  const allReadResolved =
+    message.allRead !== undefined
+      ? message.allRead
+      : otherMembers.length > 0 && readCount >= otherMembers.length;
+  const anyReadResolved = readByOthers || message.allRead === true;
 
   return (
     <div
@@ -244,8 +248,8 @@ export function MessageBubble({
                 sending={sending}
                 failed={failed}
                 deliveredAt={message.deliveredAt}
-                read={readByOthers}
-                allRead={allRead}
+                anyRead={anyReadResolved}
+                allRead={allReadResolved}
                 readCount={readCount}
                 onShowReadBy={
                   message.readBy.length > 0
@@ -342,7 +346,7 @@ function DeliveryTicks({
   sending,
   failed,
   deliveredAt,
-  read,
+  anyRead,
   allRead,
   readCount,
   onShowReadBy,
@@ -350,7 +354,7 @@ function DeliveryTicks({
   sending: boolean;
   failed: boolean;
   deliveredAt: string | null;
-  read: boolean;
+  anyRead: boolean;
   allRead: boolean;
   readCount: number;
   onShowReadBy?: () => void;
@@ -376,9 +380,16 @@ function DeliveryTicks({
       </span>
     );
   }
-  if (!read) {
+  if (!anyRead) {
     return (
       <span aria-label="Delivered" className="text-slate-300">
+        <CheckCheck className="h-3.5 w-3.5" />
+      </span>
+    );
+  }
+  if (!allRead) {
+    return (
+      <span aria-label="Delivered and partially read" className="text-slate-300">
         <CheckCheck className="h-3.5 w-3.5" />
       </span>
     );
@@ -395,7 +406,7 @@ function DeliveryTicks({
       className={cn(
         "inline-flex items-center",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm",
-        allRead ? "text-sky-300" : "text-sky-300",
+        "text-sky-300",
       )}
     >
       <CheckCheck className="h-3.5 w-3.5" />
