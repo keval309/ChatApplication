@@ -35,10 +35,14 @@ export const muteConversationValidator = [
     .toBoolean(),
 ];
 
-export const setConversationPinnedValidator = [
+/** Inbox-only: float chat in your list — not shared message pin. */
+export const setInboxPinnedValidator = [
   ...conversationIdParam,
   body("pinned")
     .isBoolean()
     .withMessage("pinned must be a boolean")
     .toBoolean(),
 ];
+
+/** @deprecated Use setInboxPinnedValidator */
+export const setConversationPinnedValidator = setInboxPinnedValidator;

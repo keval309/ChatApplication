@@ -55,6 +55,14 @@ enum ConversationMemberRole {
   MEMBER
 }
 
+/// How the member became active in this group (for UI). Legacy rows may be UNKNOWN.
+enum MemberJoinSource {
+  UNKNOWN
+  FOUNDING
+  INVITE
+  DIRECT_ADD
+}
+
 enum MessageType {
   TEXT
   IMAGE
@@ -239,6 +247,8 @@ model Conversation {
   mutedBy    Json             @default("{}")
   /// Group dissolution / soft-delete (group phase)
   deletedAt  DateTime?
+  /// Shared pinned message (groups; one per conversation)
+  pinnedMessageId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -265,6 +275,10 @@ model ConversationMember {
   leftAt         DateTime?
   /// This user’s inbox only: chat sorted to top for them. Not on `Conversation`; other members don’t see it.
   pinned         Boolean              @default(false)
+  /// Group-only: mute this member from sending until this time (admin-set).
+  mutedUntil     DateTime?
+  /// Group-only: how they joined / were added (not used for DMs).
+  joinSource     MemberJoinSource @default(UNKNOWN)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -367,6 +381,14 @@ model GroupInfo {
   avatarUrl       String?
   ownerId         String
   slowModeSeconds Int     @default(0)
+
+  inviteCode              String?   @unique
+  inviteCodeExpiresAt     DateTime?
+  inviteCodeMaxUses       Int?
+  inviteCodeUseCount      Int       @default(0)
+  messageHistoryForNewMembers String  @default("FULL")
+  whoCanAddMembers        String    @default("EVERYONE")
+  whoCanSendMessages      String    @default("EVERYONE")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

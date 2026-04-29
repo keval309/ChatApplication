@@ -3,6 +3,7 @@ import { ErrorCodes } from "../../utils/response";
 import { prisma } from "../../client/prisma";
 import { loadBlockMaps, type BlockMaps } from "../user/block-lookup";
 import * as conversationRepository from "./conversation.repository";
+import * as groupService from "../group/group.service";
 import { getStatus } from "../../socket/presence";
 import type {
   ConversationListItemDTO,
@@ -58,6 +59,8 @@ function toMemberDTO(
     role: m.role,
     joinedAt: m.joinedAt.toISOString(),
     lastReadAt: m.lastReadAt ? m.lastReadAt.toISOString() : null,
+    mutedUntil: m.mutedUntil ? m.mutedUntil.toISOString() : null,
+    joinSource: m.joinSource,
     user: m.user,
   };
 }
@@ -187,6 +190,26 @@ async function projectListItem(args: {
     otherUser,
     groupName: row.groupInfo?.name ?? null,
     groupAvatarUrl: row.groupInfo?.avatarUrl ?? null,
+    groupInfo:
+      row.type === "GROUP" && row.groupInfo
+        ? {
+            name: row.groupInfo.name,
+            description: row.groupInfo.description ?? null,
+            avatarUrl: row.groupInfo.avatarUrl ?? null,
+            ownerId: row.groupInfo.ownerId,
+            slowModeSeconds: row.groupInfo.slowModeSeconds,
+            inviteCode: row.groupInfo.inviteCode ?? null,
+            inviteCodeExpiresAt: row.groupInfo.inviteCodeExpiresAt
+              ? row.groupInfo.inviteCodeExpiresAt.toISOString()
+              : null,
+            inviteCodeMaxUses: row.groupInfo.inviteCodeMaxUses ?? null,
+            inviteCodeUseCount: row.groupInfo.inviteCodeUseCount,
+            messageHistoryForNewMembers: row.groupInfo.messageHistoryForNewMembers,
+            whoCanAddMembers: row.groupInfo.whoCanAddMembers,
+            whoCanSendMessages: row.groupInfo.whoCanSendMessages,
+          }
+        : null,
+    pinnedMessageId: row.pinnedMessageId ?? null,
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     iBlockedOther,
@@ -383,6 +406,16 @@ export async function getById(args: {
       errorDescription: "You are not a member of this conversation",
     });
   }
+  const conv = await prisma.conversation.findUnique({
+    where: { id: args.conversationId },
+    select: { deletedAt: true },
+  });
+  if (conv?.deletedAt) {
+    throw new ApiException({
+      ...ErrorCodes.NOT_FOUND,
+      errorDescription: "Conversation not found",
+    });
+  }
   const row = await conversationRepository.findById(
     args.conversationId,
     args.userId,
@@ -482,14 +515,14 @@ export async function deleteConversationHard(args: {
 
   if (conv.type === "GROUP") {
     if (me.role === "OWNER") {
-      const activeIds = conv.members
-        .filter((m) => m.leftAt === null)
-        .map((m) => m.userId);
-      await prisma.conversation.delete({ where: { id: args.conversationId } });
+      const { memberUserIds } = await groupService.dissolveGroup({
+        conversationId: args.conversationId,
+        ownerId: args.userId,
+      });
       return {
         scope: "everyone",
         conversationId: args.conversationId,
-        memberIds: activeIds,
+        memberIds: memberUserIds,
       };
     }
     const now = new Date();

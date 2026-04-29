@@ -59,6 +59,17 @@ function asWire(msg: MessageDTO, idempotencyKey?: string): MessageWire {
 
 function ackError(err: unknown): AckResponse<never> {
   if (err instanceof ApiException) {
+    if (err.clientError === "SLOW_MODE" && err.retryAfterSeconds != null) {
+      return {
+        ok: false,
+        error: {
+          message: err.errorDescription ?? "Slow mode",
+          code: err.status,
+          error: "SLOW_MODE",
+          retryAfter: err.retryAfterSeconds,
+        },
+      };
+    }
     return {
       ok: false,
       error: {

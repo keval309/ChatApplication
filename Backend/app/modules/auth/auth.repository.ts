@@ -1,5 +1,6 @@
 import type {
   AuthProvider,
+  NotificationLevel,
   Prisma,
   PresenceStatus,
   VerificationTokenType,
@@ -18,6 +19,10 @@ export interface UserAuthRecord {
   emailVerifiedAt: Date | null;
   deletedAt: Date | null;
   presenceStatus: PresenceStatus;
+  lastSeenVisible: boolean;
+  sendReadReceipts: boolean;
+  globalNotificationLevel: NotificationLevel;
+  autoUnmuteReminder: boolean;
 }
 
 const userAuthSelect = {
@@ -32,6 +37,10 @@ const userAuthSelect = {
   emailVerifiedAt: true,
   deletedAt: true,
   presenceStatus: true,
+  lastSeenVisible: true,
+  sendReadReceipts: true,
+  globalNotificationLevel: true,
+  autoUnmuteReminder: true,
 } satisfies Prisma.UserSelect;
 
 export async function findUserByEmail(

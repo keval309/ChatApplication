@@ -19,6 +19,7 @@ import type {
   MessagesPageDTO,
   SendMessageInput,
 } from "./message.types";
+import { assertGroupMessageSendAllowed } from "../group/group-permissions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // In-memory token bucket for per-user-per-conversation send rate limiting.
@@ -140,6 +141,16 @@ export async function listForConversation(args: {
     conversationId: args.conversationId,
     userId: args.userId,
   });
+  const conv = await prisma.conversation.findUnique({
+    where: { id: args.conversationId },
+    select: { deletedAt: true, type: true },
+  });
+  if (conv?.deletedAt) {
+    throw new ApiException({
+      ...ErrorCodes.NOT_FOUND,
+      errorDescription: "Conversation not found",
+    });
+  }
   const mem = await prisma.conversationMember.findUnique({
     where: {
       conversationId_userId: {
@@ -147,8 +158,22 @@ export async function listForConversation(args: {
         userId: args.userId,
       },
     },
-    select: { historyClearedAt: true },
+    select: { historyClearedAt: true, joinedAt: true },
   });
+  let visibilityLowerBound: Date | null = null;
+  if (conv?.type === "GROUP") {
+    const gi = await prisma.groupInfo.findUnique({
+      where: { conversationId: args.conversationId },
+      select: { messageHistoryForNewMembers: true },
+    });
+    const pol = gi?.messageHistoryForNewMembers ?? "FULL";
+    const joinedAt = mem?.joinedAt ?? new Date();
+    if (pol === "LAST_7_DAYS") {
+      visibilityLowerBound = new Date(joinedAt.getTime() - 7 * 86_400_000);
+    } else if (pol === "NONE") {
+      visibilityLowerBound = joinedAt;
+    }
+  }
   const limit = Math.min(args.limit ?? MESSAGE_PAGE_SIZE, 100);
   const rows = await messageRepository.findPage({
     conversationId: args.conversationId,
@@ -156,6 +181,7 @@ export async function listForConversation(args: {
     limit,
     viewerUserId: args.userId,
     historyClearedAt: mem?.historyClearedAt ?? null,
+    visibilityLowerBound,
   });
   const hasMore = rows.length > limit;
   const trimmed = hasMore ? rows.slice(0, limit) : rows;
@@ -242,6 +268,7 @@ export async function sendMessage(input: SendMessageInput): Promise<MessageDTO> 
     where: { id: input.conversationId },
     select: {
       type: true,
+      deletedAt: true,
       members: { select: { userId: true } },
     },
   });
@@ -250,6 +277,48 @@ export async function sendMessage(input: SendMessageInput): Promise<MessageDTO> 
       ...ErrorCodes.NOT_FOUND,
       errorDescription: "Conversation not found",
     });
+  }
+  if (convBrief.deletedAt) {
+    throw new ApiException({
+      ...ErrorCodes.FORBIDDEN,
+      errorDescription: "This group has been deleted",
+    });
+  }
+
+  if (convBrief.type === "GROUP") {
+    await assertGroupMessageSendAllowed(
+      input.conversationId,
+      input.senderId,
+    );
+    const gi = await prisma.groupInfo.findUnique({
+      where: { conversationId: input.conversationId },
+      select: { slowModeSeconds: true },
+    });
+    if (gi && gi.slowModeSeconds > 0) {
+      const last = await prisma.message.findFirst({
+        where: {
+          conversationId: input.conversationId,
+          senderId: input.senderId,
+          deletedAt: null,
+        },
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true },
+      });
+      if (last) {
+        const elapsedSec =
+          (Date.now() - last.createdAt.getTime()) / 1000;
+        const need = gi.slowModeSeconds;
+        if (elapsedSec < need) {
+          const retryAfter = Math.max(1, Math.ceil(need - elapsedSec));
+          throw new ApiException({
+            ...ErrorCodes.TOO_MANY_REQUESTS,
+            errorDescription: "Slow mode is enabled for this group",
+            clientError: "SLOW_MODE",
+            retryAfterSeconds: retryAfter,
+          });
+        }
+      }
+    }
   }
 
   let suppressedForUserIds: string[] = [];

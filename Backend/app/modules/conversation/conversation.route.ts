@@ -14,7 +14,7 @@ import {
   getOrCreateDmValidator,
   listConversationsValidator,
   muteConversationValidator,
-  setConversationPinnedValidator,
+  setInboxPinnedValidator,
 } from "./conversation.validator";
 
 const router = Router();
@@ -163,8 +163,8 @@ router.patch(
 );
 
 router.patch(
-  "/:id/pin",
-  setConversationPinnedValidator,
+  "/:id/inbox-pin",
+  setInboxPinnedValidator,
   asyncHandler(async (req) => {
     const user = requireUser(req as RequestExtended);
     await conversationService.setMemberPinned({

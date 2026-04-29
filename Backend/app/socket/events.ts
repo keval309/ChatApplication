@@ -42,6 +42,18 @@ export const SOCKET_EVENTS = {
   CONVERSATION_DELETED: "conversation:deleted",
   CONVERSATION_BLOCKED: "conversation:blocked",
   CONVERSATION_UNBLOCKED: "conversation:unblocked",
+
+  // Group lifecycle (server → client)
+  GROUP_MEMBER_ADDED: "group:member_added",
+  GROUP_MEMBER_REMOVED: "group:member_removed",
+  GROUP_MEMBER_LEFT: "group:member_left",
+  GROUP_ROLE_CHANGED: "group:role_changed",
+  GROUP_OWNERSHIP_TRANSFERRED: "group:ownership_transferred",
+  GROUP_SETTINGS_UPDATED: "group:settings_updated",
+  GROUP_MESSAGE_PINNED: "group:message_pinned",
+  GROUP_MESSAGE_UNPINNED: "group:message_unpinned",
+  GROUP_DISSOLVED: "group:dissolved",
+  GROUP_CREATED: "group:created",
 } as const;
 
 export type SocketEvent = (typeof SOCKET_EVENTS)[keyof typeof SOCKET_EVENTS];

@@ -1,4 +1,8 @@
-import type { AuthProvider, VerificationTokenType } from "../../generated/prisma/client";
+import type {
+  AuthProvider,
+  NotificationLevel,
+  VerificationTokenType,
+} from "../../generated/prisma/client";
 import type { PresenceStatus } from "../../generated/prisma/client";
 
 export interface RegisterDTO {
@@ -38,6 +42,10 @@ export interface AuthUserResponseDTO {
   statusMessage: string | null;
   bio: string | null;
   presenceStatus: PresenceStatus;
+  lastSeenVisible: boolean;
+  sendReadReceipts: boolean;
+  globalNotificationLevel: NotificationLevel;
+  autoUnmuteReminder: boolean;
   emailVerifiedAt: Date | null;
   hasPassword: boolean;
   providers: AuthProvider[];

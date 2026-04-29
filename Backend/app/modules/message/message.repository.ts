@@ -37,6 +37,18 @@ export type MessageRow = NonNullable<
   Awaited<ReturnType<typeof findById>>
 >;
 
+function mergedHistoryLower(
+  historyClearedAt: Date | null,
+  visibilityLowerBound: Date | null | undefined,
+): Date | undefined {
+  if (!historyClearedAt && !visibilityLowerBound) return undefined;
+  if (!historyClearedAt) return visibilityLowerBound ?? undefined;
+  if (!visibilityLowerBound) return historyClearedAt;
+  return historyClearedAt.getTime() >= visibilityLowerBound.getTime()
+    ? historyClearedAt
+    : visibilityLowerBound;
+}
+
 /**
  * Returns messages newest-first, with one extra row to detect hasMore.
  * Cursor = id of the oldest message from the previous page (we paginate older
@@ -48,14 +60,23 @@ export async function findPage(args: {
   limit: number;
   viewerUserId: string;
   historyClearedAt: Date | null;
+  /** Group policy + joinedAt: hide older messages for this viewer. */
+  visibilityLowerBound?: Date | null;
 }) {
-  const { conversationId, cursor, limit, viewerUserId, historyClearedAt } =
-    args;
+  const {
+    conversationId,
+    cursor,
+    limit,
+    viewerUserId,
+    historyClearedAt,
+    visibilityLowerBound,
+  } = args;
+  const lower = mergedHistoryLower(historyClearedAt, visibilityLowerBound);
   return prisma.message.findMany({
     where: {
       conversationId,
       NOT: { suppressedForUserIds: { has: viewerUserId } },
-      ...(historyClearedAt ? { createdAt: { gt: historyClearedAt } } : {}),
+      ...(lower ? { createdAt: { gt: lower } } : {}),
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,

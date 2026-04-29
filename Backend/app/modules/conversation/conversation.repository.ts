@@ -31,13 +31,25 @@ export function buildConversationListSelect(viewerUserId: string) {
     archivedBy: true,
     createdAt: true,
     updatedAt: true,
+    pinnedMessageId: true,
     groupInfo: {
       select: {
         name: true,
+        description: true,
         avatarUrl: true,
+        ownerId: true,
+        slowModeSeconds: true,
+        inviteCode: true,
+        inviteCodeExpiresAt: true,
+        inviteCodeMaxUses: true,
+        inviteCodeUseCount: true,
+        messageHistoryForNewMembers: true,
+        whoCanAddMembers: true,
+        whoCanSendMessages: true,
       },
     },
     members: {
+      where: { leftAt: null },
       select: {
         userId: true,
         role: true,
@@ -45,6 +57,8 @@ export function buildConversationListSelect(viewerUserId: string) {
         lastReadAt: true,
         historyClearedAt: true,
         pinned: true,
+        mutedUntil: true,
+        joinSource: true,
         user: {
           select: {
             id: true,
@@ -146,7 +160,12 @@ export async function findConversationsForUser(args: {
     where: {
       userId,
       leftAt: null,
-      conversation: { ...baseWhere, ...archiveCondition, ...typeCondition },
+      conversation: {
+        deletedAt: null,
+        ...baseWhere,
+        ...archiveCondition,
+        ...typeCondition,
+      },
     },
     orderBy: [
       { pinned: "desc" },
@@ -254,15 +273,23 @@ export async function isMember(args: {
         userId: args.userId,
       },
     },
-    select: { leftAt: true },
+    select: {
+      leftAt: true,
+      conversation: { select: { deletedAt: true } },
+    },
   });
-  return !!m && m.leftAt === null;
+  return !!m && m.leftAt === null && m.conversation.deletedAt === null;
 }
 
 /** Members still in the conversation (not “delete for me” / left). */
 export async function listMemberUserIds(
   conversationId: string,
 ): Promise<string[]> {
+  const conv = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { deletedAt: true },
+  });
+  if (conv?.deletedAt) return [];
   const rows = await prisma.conversationMember.findMany({
     where: { conversationId, leftAt: null },
     select: { userId: true },

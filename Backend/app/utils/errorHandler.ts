@@ -102,6 +102,10 @@ export class ApiException extends Error {
   status?: number;
   code?: number;
   errorDescription?: string;
+  /** Optional machine code for socket/REST clients (e.g. SLOW_MODE). */
+  clientError?: string;
+  /** Optional hint for rate limits / slow mode (seconds). */
+  retryAfterSeconds?: number;
 
   constructor({
     status,
@@ -109,12 +113,16 @@ export class ApiException extends Error {
     message,
     errorDescription,
     error,
+    clientError,
+    retryAfterSeconds,
   }: {
     status?: number;
     code?: number;
     message?: string;
     errorDescription?: string;
-    error?: any;
+    error?: unknown;
+    clientError?: string;
+    retryAfterSeconds?: number;
   }) {
     super(message);
 
@@ -123,12 +131,15 @@ export class ApiException extends Error {
     }
 
     if (error) {
-      logger.error(error?.toJSON ? error.toJSON() : error);
+      const e = error as { toJSON?: () => unknown };
+      logger.error(e?.toJSON ? e.toJSON() : e);
     }
 
     this.status = status ?? 500;
     this.code = code;
     this.errorDescription = errorDescription ?? message;
+    this.clientError = clientError;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 

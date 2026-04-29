@@ -5,6 +5,9 @@ export interface ConversationMemberDTO {
   role: ConversationMemberRole;
   joinedAt: string;
   lastReadAt: string | null;
+  mutedUntil?: string | null;
+  /** Group only: INVITE = joined via link; DIRECT_ADD = added by someone; FOUNDING = there when group was created. */
+  joinSource?: "UNKNOWN" | "FOUNDING" | "INVITE" | "DIRECT_ADD";
   user: {
     id: string;
     username: string | null;
@@ -16,6 +19,21 @@ export interface ConversationMemberDTO {
     lastSeenAt?: string | Date | null;
     lastSeenVisible?: boolean;
   };
+}
+
+export interface GroupInfoResponseDTO {
+  name: string;
+  description: string | null;
+  avatarUrl: string | null;
+  ownerId: string;
+  slowModeSeconds: number;
+  inviteCode: string | null;
+  inviteCodeExpiresAt: string | null;
+  inviteCodeMaxUses: number | null;
+  inviteCodeUseCount: number;
+  messageHistoryForNewMembers: string;
+  whoCanAddMembers: string;
+  whoCanSendMessages: string;
 }
 
 export interface LastMessagePreviewDTO {
@@ -45,6 +63,8 @@ export interface ConversationListItemDTO {
   otherUser: ConversationMemberDTO["user"] | null;
   groupName: string | null;
   groupAvatarUrl: string | null;
+  groupInfo: GroupInfoResponseDTO | null;
+  pinnedMessageId: string | null;
   updatedAt: string;
   createdAt: string;
   /** DM only: set when loaded via getById / getOrCreateDm. */

@@ -1,4 +1,6 @@
 import type { Server as IOServer, Socket as IOSocket } from "socket.io";
+import type { MessageDTO } from "../modules/message/message.types";
+import type { ConversationMemberRole } from "../generated/prisma/client";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DTOs that travel over the wire. Keep these flat and serializable.
@@ -58,6 +60,7 @@ export interface NotificationPushEvent {
 
 export interface NotificationUnmutedEvent {
   conversationId: string;
+  conversationName?: string;
 }
 
 export interface ConversationHistoryClearedEvent {
@@ -173,13 +176,82 @@ export interface PresenceChangedEvent {
   lastSeen: string | null;
 }
 
+export interface GroupMemberAddedUserWire {
+  id: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  role: ConversationMemberRole;
+}
+
+export interface GroupMemberAddedEvent {
+  conversationId: string;
+  addedUsers: GroupMemberAddedUserWire[];
+  /** Present for clients that support it; omitted on very old payloads. */
+  addedVia?: "INVITE" | "DIRECT_ADD";
+}
+
+export interface GroupMemberRemovedEvent {
+  conversationId: string;
+  removedUserId: string;
+  removedBy: string;
+}
+
+export interface GroupMemberLeftEvent {
+  conversationId: string;
+  userId: string;
+}
+
+export interface GroupRoleChangedEvent {
+  conversationId: string;
+  userId: string;
+  newRole: "ADMIN" | "MEMBER";
+  changedBy: string;
+}
+
+export interface GroupOwnershipTransferredEvent {
+  conversationId: string;
+  newOwnerId: string;
+  previousOwnerId: string;
+}
+
+export interface GroupSettingsUpdatedEvent {
+  conversationId: string;
+  changes: Record<string, string | number>;
+}
+
+export interface GroupMessagePinnedEvent {
+  conversationId: string;
+  message: MessageDTO;
+}
+
+export interface GroupMessageUnpinnedEvent {
+  conversationId: string;
+}
+
+export interface GroupDissolvedEvent {
+  conversationId: string;
+}
+
+export interface GroupCreatedEvent {
+  conversationId: string;
+  groupName: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Standard ack envelope returned for emitWithAck flows.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type AckResponse<T> =
   | { ok: true; data: T }
-  | { ok: false; error: { message: string; code?: number } };
+  | {
+      ok: false;
+      error: {
+        message: string;
+        code?: number;
+        error?: string;
+        retryAfter?: number;
+      };
+    };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Typed Socket.io maps. Use everywhere the io / socket types are needed.
@@ -223,6 +295,16 @@ export interface ServerToClientEvents {
   "conversation:deleted": (payload: ConversationDeletedEvent) => void;
   "conversation:blocked": (payload: ConversationBlockedEvent) => void;
   "conversation:unblocked": (payload: ConversationUnblockedEvent) => void;
+  "group:member_added": (payload: GroupMemberAddedEvent) => void;
+  "group:member_removed": (payload: GroupMemberRemovedEvent) => void;
+  "group:member_left": (payload: GroupMemberLeftEvent) => void;
+  "group:role_changed": (payload: GroupRoleChangedEvent) => void;
+  "group:ownership_transferred": (payload: GroupOwnershipTransferredEvent) => void;
+  "group:settings_updated": (payload: GroupSettingsUpdatedEvent) => void;
+  "group:message_pinned": (payload: GroupMessagePinnedEvent) => void;
+  "group:message_unpinned": (payload: GroupMessageUnpinnedEvent) => void;
+  "group:dissolved": (payload: GroupDissolvedEvent) => void;
+  "group:created": (payload: GroupCreatedEvent) => void;
 }
 
 export interface InterServerEvents {
