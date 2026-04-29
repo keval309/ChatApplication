@@ -14,7 +14,7 @@ import type {
   MessagesPage,
   ReadReceiptEntry,
 } from "@/types/chat";
-import { conversationsQueryKey } from "./useConversations";
+import { conversationsQueryKey } from "./conversation-list-cache";
 import {
   SOCKET_EVENTS,
   type MessageDeletedEvent,

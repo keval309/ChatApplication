@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation, type InfiniteData } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowLeft,
@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Pin,
   PinOff,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import * as chatApi from "@/lib/chat-api";
@@ -26,8 +27,8 @@ import {
   useMuteConversation,
   useUnmuteConversation,
   useSetConversationPinned,
-  conversationsQueryKey,
 } from "@/hooks/useConversations";
+import { conversationsQueryKey } from "@/hooks/conversation-list-cache";
 import { useBlockUser, useUnblockUser } from "@/hooks/useAuth";
 import { useMessages, messagesQueryKey } from "@/hooks/useMessages";
 import { useTyping } from "@/hooks/useTyping";
@@ -37,8 +38,10 @@ import { SOCKET_EVENTS } from "@/types/socket";
 import type {
   ConversationDeletedEvent,
   ConversationRemovedForMeEvent,
+  GroupDissolvedEvent,
   ReceiptReadPayload,
 } from "@/types/socket";
+import { GroupRightPanel } from "@/components/group/group-right-panel";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "@/components/ui/Toaster";
 import type { MuteDuration } from "@/lib/chat-api";
@@ -159,6 +162,7 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
   const queryClient = useQueryClient();
 
   const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
+  const [groupPanelOpen, setGroupPanelOpen] = React.useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = React.useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
   const [confirmBlockOpen, setConfirmBlockOpen] = React.useState(false);
@@ -191,11 +195,18 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
       toast("This chat was removed from your inbox.");
       router.push("/chat");
     };
+    const onDissolved = (e: GroupDissolvedEvent) => {
+      if (e.conversationId !== conversationId) return;
+      toast.error("This group was deleted by the owner.");
+      router.push("/chat");
+    };
     socket.on(SOCKET_EVENTS.CONVERSATION_DELETED, onDeleted);
     socket.on(SOCKET_EVENTS.CONVERSATION_REMOVED_FOR_ME, onRemovedForMe);
+    socket.on(SOCKET_EVENTS.GROUP_DISSOLVED, onDissolved);
     return () => {
       socket.off(SOCKET_EVENTS.CONVERSATION_DELETED, onDeleted);
       socket.off(SOCKET_EVENTS.CONVERSATION_REMOVED_FOR_ME, onRemovedForMe);
+      socket.off(SOCKET_EVENTS.GROUP_DISSOLVED, onDissolved);
     };
   }, [socket, conversationId, router]);
 
@@ -482,6 +493,29 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
       ? formatLastSeen(presence)
       : `${conv?.members.length ?? 0} members`;
 
+  const pinnedMessage =
+    conv?.pinnedMessageId != null
+      ? messages.find((m) => m.id === conv.pinnedMessageId) ?? null
+      : null;
+
+  const myRole = conv?.members.find((m) => m.userId === me?.id)?.role ?? null;
+  const slowModeSeconds = conv?.groupInfo?.slowModeSeconds ?? 0;
+  const announcementMode =
+    conv?.groupInfo?.whoCanSendMessages === "ADMINS_ONLY";
+
+  const canUnpinAsAdmin =
+    conv?.type === "GROUP" &&
+    (myRole === "OWNER" || myRole === "ADMIN");
+
+  const unpinMessageMut = useMutation({
+    mutationFn: () => chatApi.unpinConversationMessage(conversationId),
+    onSuccess: () => {
+      void conversationQuery.refetch();
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+    onError: () => toast.error("Could not unpin message."),
+  });
+
   const runMute = (duration: MuteDuration) => {
     muteConv.mutate(
       { id: conversationId, duration, autoUnmuteReminder: false },
@@ -607,7 +641,8 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full min-h-0 bg-bg relative">
+    <div className="flex flex-row flex-1 min-h-0 min-w-0 bg-bg relative">
+      <div className="flex flex-col flex-1 min-w-0 min-h-0 relative">
       <ConversationHeader
         loading={conversationQuery.isLoading}
         onBack={() => router.push("/chat")}
@@ -644,7 +679,44 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
         pinPending={setPinConv.isPending}
         mutePending={muteConv.isPending}
         unmutePending={unmuteConv.isPending}
+        showGroupDetails={conv?.type === "GROUP"}
+        onOpenGroupDetails={() => setGroupPanelOpen(true)}
       />
+
+      {conv?.type === "GROUP" && pinnedMessage ? (
+        <div className="shrink-0 px-3 py-2 border-b border-border bg-bg-subtle flex items-center gap-2">
+          <button
+            type="button"
+            className="flex-1 min-w-0 text-left text-xs text-text-muted truncate"
+            onClick={() => {
+              const el = document.querySelector(
+                `[data-message-id="${pinnedMessage.id}"]`,
+              );
+              el?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+          >
+            <span className="font-medium text-text">Pinned: </span>
+            {pinnedMessage.content.slice(0, 120)}
+            {pinnedMessage.content.length > 120 ? "…" : ""}
+          </button>
+          {canUnpinAsAdmin ? (
+            <button
+              type="button"
+              aria-label="Unpin message"
+              disabled={unpinMessageMut.isPending}
+              onClick={() => unpinMessageMut.mutate()}
+              className={cn(
+                "h-11 w-11 md:h-9 md:w-9 shrink-0 grid place-items-center rounded-full",
+                "text-text-muted hover:bg-bg-subtle",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                "disabled:opacity-50",
+              )}
+            >
+              <PinOff className="h-5 w-5" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {conv?.isMuted ? (
         <div
@@ -795,12 +867,22 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
         conversationId={conversationId}
         disabled={
           !isConnected ||
-          Boolean(conv?.type === "DM" && conv.iBlockedOther)
+          Boolean(conv?.type === "DM" && conv.iBlockedOther) ||
+          Boolean(
+            conv?.type === "GROUP" &&
+              announcementMode &&
+              myRole === "MEMBER",
+          )
+        }
+        groupSlowModeSeconds={
+          conv?.type === "GROUP" && myRole === "MEMBER" ? slowModeSeconds : 0
         }
         composerPlaceholder={
           conv?.type === "DM" && conv.iBlockedOther && isConnected
             ? `Unblock ${peerFirstName} to send a message.`
-            : undefined
+            : conv?.type === "GROUP" && announcementMode && myRole === "MEMBER"
+              ? "Only admins can post in announcement mode."
+              : undefined
         }
       />
 
@@ -844,6 +926,16 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
         onConfirm={handleBlockConfirm}
         onCancel={() => setConfirmBlockOpen(false)}
       />
+      </div>
+
+      {conv?.type === "GROUP" && conv.groupInfo && me ? (
+        <GroupRightPanel
+          conversation={conv}
+          meId={me.id}
+          open={groupPanelOpen}
+          onClose={() => setGroupPanelOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -874,6 +966,8 @@ function ConversationHeader({
   pinPending,
   mutePending,
   unmutePending,
+  showGroupDetails,
+  onOpenGroupDetails,
 }: {
   loading: boolean;
   onBack: () => void;
@@ -899,6 +993,8 @@ function ConversationHeader({
   pinPending: boolean;
   mutePending: boolean;
   unmutePending: boolean;
+  showGroupDetails?: boolean;
+  onOpenGroupDetails?: () => void;
 }) {
   return (
     <header className="flex items-center gap-3 px-3 py-2 border-b border-border bg-bg-elevated min-h-14 shrink-0">
@@ -963,6 +1059,20 @@ function ConversationHeader({
         >
           <Video className="h-5 w-5" />
         </button>
+        {showGroupDetails && onOpenGroupDetails ? (
+          <button
+            type="button"
+            aria-label="Group details"
+            onClick={onOpenGroupDetails}
+            className={cn(
+              "h-11 w-11 grid place-items-center rounded-full",
+              "text-text-muted hover:bg-bg-subtle",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+            )}
+          >
+            <Users className="h-5 w-5" />
+          </button>
+        ) : null}
         <div className="relative" ref={moreMenuRef}>
           <button
             type="button"

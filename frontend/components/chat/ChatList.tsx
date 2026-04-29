@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Search, Plus, MessageSquarePlus } from "lucide-react";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useConversations } from "@/hooks/useConversations";
@@ -44,6 +44,7 @@ function ListSkeleton() {
 }
 
 export function ChatList() {
+  const router = useRouter();
   const params = useParams<{ id?: string }>();
   const activeId = params?.id ?? null;
   const { data: me } = useMe();
@@ -70,6 +71,16 @@ export function ChatList() {
     });
   }, [conversations, search]);
 
+  const isGroupsTab = filter === "GROUPS";
+
+  const openNewConversation = (): void => {
+    if (isGroupsTab) {
+      router.push("/groups");
+      return;
+    }
+    setNewChatOpen(true);
+  };
+
   return (
     <>
       <div className="flex flex-col h-full bg-bg-elevated border-r border-border min-w-0">
@@ -78,8 +89,8 @@ export function ChatList() {
           <h1 className="text-lg font-semibold text-text">Chats</h1>
           <button
             type="button"
-            aria-label="New chat"
-            onClick={() => setNewChatOpen(true)}
+            aria-label={isGroupsTab ? "New group" : "New chat"}
+            onClick={openNewConversation}
             className={cn(
               "h-9 w-9 grid place-items-center rounded-full",
               "bg-bg-subtle hover:bg-border text-text",
@@ -120,7 +131,10 @@ export function ChatList() {
                 type="button"
                 role="tab"
                 aria-selected={active}
-                onClick={() => setFilter(t.value)}
+                onClick={() => {
+                  setFilter(t.value);
+                  if (t.value === "GROUPS") setNewChatOpen(false);
+                }}
                 className={cn(
                   "h-8 px-3 rounded-full text-sm font-medium transition-colors",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
@@ -153,21 +167,27 @@ export function ChatList() {
             </div>
             <div className="space-y-1">
               <p className="text-sm font-medium text-text">
-                {search ? "No matches" : "No conversations yet"}
+                {search
+                  ? "No matches"
+                  : isGroupsTab
+                    ? "No groups yet"
+                    : "No conversations yet"}
               </p>
               <p className="text-xs text-text-muted">
                 {search
                   ? "Try a different search term."
-                  : "Start a new chat to get going."}
+                  : isGroupsTab
+                    ? "Create a group to start chatting together."
+                    : "Start a new chat to get going."}
               </p>
             </div>
             {!search ? (
               <Button
                 size="sm"
                 leftIcon={<Plus className="h-4 w-4" />}
-                onClick={() => setNewChatOpen(true)}
+                onClick={openNewConversation}
               >
-                Start a new chat
+                {isGroupsTab ? "Create group" : "Start a new chat"}
               </Button>
             ) : null}
           </div>
@@ -197,7 +217,10 @@ export function ChatList() {
         )}
       </div>
       </div>
-      <NewChatDialog open={newChatOpen} onClose={() => setNewChatOpen(false)} />
+      <NewChatDialog
+        open={newChatOpen && !isGroupsTab}
+        onClose={() => setNewChatOpen(false)}
+      />
     </>
   );
 }

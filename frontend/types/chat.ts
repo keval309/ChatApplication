@@ -2,6 +2,7 @@ import type { PresenceStatus } from "./auth";
 
 export type ConversationType = "DM" | "GROUP";
 export type ConversationMemberRole = "OWNER" | "ADMIN" | "MEMBER";
+export type MemberJoinSource = "UNKNOWN" | "FOUNDING" | "INVITE" | "DIRECT_ADD";
 export type MessageType = "TEXT" | "IMAGE" | "GIF" | "FILE";
 
 export interface MemberUser {
@@ -16,11 +17,29 @@ export interface MemberUser {
   lastSeenVisible?: boolean;
 }
 
+export interface GroupInfo {
+  name: string;
+  description: string | null;
+  avatarUrl: string | null;
+  ownerId: string;
+  slowModeSeconds: number;
+  inviteCode: string | null;
+  inviteCodeExpiresAt: string | null;
+  inviteCodeMaxUses: number | null;
+  inviteCodeUseCount: number;
+  messageHistoryForNewMembers: string;
+  whoCanAddMembers: string;
+  whoCanSendMessages: string;
+}
+
 export interface ConversationMember {
   userId: string;
   role: ConversationMemberRole;
   joinedAt: string;
   lastReadAt: string | null;
+  mutedUntil?: string | null;
+  /** Group: how they became a member (from API / realtime). */
+  joinSource?: MemberJoinSource;
   user: MemberUser;
 }
 
@@ -47,6 +66,8 @@ export interface ConversationListItem {
   otherUser: MemberUser | null;
   groupName: string | null;
   groupAvatarUrl: string | null;
+  groupInfo: GroupInfo | null;
+  pinnedMessageId: string | null;
   updatedAt: string;
   createdAt: string;
   /** DM detail: you blocked the other user */

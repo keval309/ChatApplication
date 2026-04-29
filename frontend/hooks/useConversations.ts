@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -8,73 +7,17 @@ import {
   type InfiniteData,
 } from "@tanstack/react-query";
 import * as chatApi from "@/lib/chat-api";
-import type { ConversationFilter } from "@/lib/chat-api";
-import type {
-  ConversationListItem,
-  ConversationsPage,
-} from "@/types/chat";
-import type { MuteDuration } from "@/lib/chat-api";
-import {
-  SOCKET_EVENTS,
-  type ConversationBlockedEvent,
-  type ConversationDeletedEvent,
-  type ConversationHistoryClearedEvent,
-  type ConversationRemovedForMeEvent,
-  type ConversationUnblockedEvent,
-  type MessageDeletedEvent,
-  type MessageNewEvent,
-  type MessageUpdatedEvent,
-  type NotificationPushEvent,
-  type NotificationUnmutedEvent,
-  type ReceiptUpdateEvent,
-} from "@/types/socket";
-import { useSocket } from "./useSocket";
-import { useMe } from "./useAuth";
+import type { ConversationFilter, MuteDuration } from "@/lib/chat-api";
+import type { ConversationListItem, ConversationsPage } from "@/types/chat";
 import { toast } from "@/components/ui/Toaster";
 import { messagesQueryKey } from "./useMessages";
+import {
+  conversationsQueryKey,
+  sortConversationsByInboxOrder,
+  resortFirstPageAllFilters,
+} from "./conversation-list-cache";
 
-export const conversationsQueryKey = (filter: ConversationFilter) =>
-  ["conversations", filter] as const;
-
-/** Matches API order: pinned (for you) first, then `updatedAt` desc, then id desc. */
-function sortConversationsByInboxOrder(
-  items: ConversationListItem[],
-): ConversationListItem[] {
-  return [...items].sort((a, b) => {
-    const pinA = a.pinnedByMe ? 1 : 0;
-    const pinB = b.pinnedByMe ? 1 : 0;
-    if (pinA !== pinB) return pinB - pinA;
-    const tA = new Date(a.updatedAt).getTime();
-    const tB = new Date(b.updatedAt).getTime();
-    if (tA !== tB) return tB - tA;
-    return b.id.localeCompare(a.id);
-  });
-}
-
-function resortFirstPageAllFilters(
-  qc: ReturnType<typeof useQueryClient>,
-): void {
-  const filters: ConversationFilter[] = ["ALL", "ARCHIVED", "GROUPS"];
-  for (const f of filters) {
-    qc.setQueryData<InfiniteData<ConversationsPage>>(
-      conversationsQueryKey(f),
-      (data) => {
-        if (!data?.pages[0]) return data;
-        const [first, ...rest] = data.pages;
-        return {
-          ...data,
-          pages: [
-            {
-              ...first,
-              conversations: sortConversationsByInboxOrder(first.conversations),
-            },
-            ...rest,
-          ],
-        };
-      },
-    );
-  }
-}
+export { conversationsQueryKey } from "./conversation-list-cache";
 
 function estimatedMuteUntil(duration: MuteDuration): string | null {
   if (duration === "forever") return null;
@@ -231,8 +174,6 @@ function patchConversationAllFilters(
 
 export function useConversations(filter: ConversationFilter = "ALL") {
   const qc = useQueryClient();
-  const { socket } = useSocket();
-  const { data: me } = useMe();
 
   const query = useInfiniteQuery<
     ConversationsPage,
@@ -249,185 +190,6 @@ export function useConversations(filter: ConversationFilter = "ALL") {
     staleTime: 60_000,
     refetchOnWindowFocus: true,
   });
-
-  // ── Surgical cache mutations on real-time events ──────────────────────────
-  useEffect(() => {
-    if (!socket) return;
-
-    const filters: ConversationFilter[] = ["ALL", "ARCHIVED", "GROUPS"];
-
-    function patchConversation(
-      conversationId: string,
-      patcher: (item: ConversationListItem) => ConversationListItem,
-    ) {
-      for (const f of filters) {
-        qc.setQueryData<InfiniteData<ConversationsPage>>(
-          conversationsQueryKey(f),
-          (data) => {
-            if (!data) return data;
-            return {
-              ...data,
-              pages: data.pages.map((page) => ({
-                ...page,
-                conversations: page.conversations.map((c) =>
-                  c.id === conversationId ? patcher(c) : c,
-                ),
-              })),
-            };
-          },
-        );
-      }
-    }
-
-    const onNew = (msg: MessageNewEvent) => {
-      let inList = false;
-      for (const f of filters) {
-        const data = qc.getQueryData<InfiniteData<ConversationsPage>>(
-          conversationsQueryKey(f),
-        );
-        if (
-          data?.pages.some((p) =>
-            p.conversations.some((c) => c.id === msg.conversationId),
-          )
-        ) {
-          inList = true;
-          break;
-        }
-      }
-      if (!inList) {
-        void qc.invalidateQueries({ queryKey: ["conversations"] });
-        return;
-      }
-      patchConversation(msg.conversationId, (c) => ({
-        ...c,
-        lastMessage: {
-          id: msg.id,
-          senderId: msg.senderId,
-          content: msg.content,
-          type: msg.type,
-          createdAt: msg.createdAt,
-          deletedAt: msg.deletedAt,
-        },
-        unreadCount: msg.senderId === me?.id ? c.unreadCount : c.unreadCount + 1,
-        updatedAt: msg.createdAt,
-      }));
-      resortFirstPageAllFilters(qc);
-    };
-
-    const onUpdated = (msg: MessageUpdatedEvent) => {
-      patchConversation(msg.conversationId, (c) =>
-        c.lastMessage?.id === msg.id
-          ? {
-              ...c,
-              lastMessage: { ...c.lastMessage, content: msg.content },
-            }
-          : c,
-      );
-    };
-
-    const onDeleted = (msg: MessageDeletedEvent) => {
-      patchConversation(msg.conversationId, (c) =>
-        c.lastMessage?.id === msg.id
-          ? {
-              ...c,
-              lastMessage: { ...c.lastMessage, deletedAt: msg.deletedAt },
-            }
-          : c,
-      );
-    };
-
-    const onReceipt = (e: ReceiptUpdateEvent) => {
-      patchConversation(e.conversationId, (c) => ({ ...c, unreadCount: 0 }));
-    };
-
-    const onHistoryCleared = (e: ConversationHistoryClearedEvent) => {
-      patchConversation(e.conversationId, (c) => ({
-        ...c,
-        lastMessage: null,
-        unreadCount: 0,
-      }));
-      qc.setQueryData(messagesQueryKey(e.conversationId), {
-        pages: [{ messages: [], nextCursor: null, hasMore: false }],
-        pageParams: [null],
-      });
-    };
-
-    const onConversationDeleted = (e: ConversationDeletedEvent) => {
-      for (const f of filters) {
-        qc.setQueryData<InfiniteData<ConversationsPage>>(
-          conversationsQueryKey(f),
-          (data) => {
-            if (!data) return data;
-            return {
-              ...data,
-              pages: data.pages.map((page) => ({
-                ...page,
-                conversations: page.conversations.filter((c) => c.id !== e.conversationId),
-              })),
-            };
-          },
-        );
-      }
-      qc.removeQueries({ queryKey: messagesQueryKey(e.conversationId) });
-      qc.removeQueries({ queryKey: ["conversation", e.conversationId] });
-    };
-
-    const onRemovedForMe = (e: ConversationRemovedForMeEvent) => {
-      onConversationDeleted(e);
-    };
-
-    const onNotificationPush = (e: NotificationPushEvent) => {
-      const preview =
-        e.preview.length > 80 ? `${e.preview.slice(0, 80)}…` : e.preview;
-      toast("New message", { description: preview });
-    };
-
-    const onNotificationUnmuted = (_e: NotificationUnmutedEvent) => {
-      toast.success("Notifications on again for a muted chat.");
-    };
-
-    const onConversationBlocked = (e: ConversationBlockedEvent) => {
-      if (e.conversationId) {
-        void qc.invalidateQueries({ queryKey: ["conversation", e.conversationId] });
-      }
-      void qc.invalidateQueries({ queryKey: ["user", "blocked-users"] });
-      void qc.invalidateQueries({ queryKey: ["conversations"] });
-    };
-
-    const onConversationUnblocked = (e: ConversationUnblockedEvent) => {
-      if (e.conversationId) {
-        void qc.invalidateQueries({ queryKey: ["conversation", e.conversationId] });
-      }
-      void qc.invalidateQueries({ queryKey: ["user", "blocked-users"] });
-      void qc.invalidateQueries({ queryKey: ["conversations"] });
-    };
-
-    socket.on(SOCKET_EVENTS.MESSAGE_NEW, onNew);
-    socket.on(SOCKET_EVENTS.MESSAGE_UPDATED, onUpdated);
-    socket.on(SOCKET_EVENTS.MESSAGE_DELETED, onDeleted);
-    socket.on(SOCKET_EVENTS.RECEIPT_UPDATE, onReceipt);
-    socket.on(SOCKET_EVENTS.CONVERSATION_HISTORY_CLEARED, onHistoryCleared);
-    socket.on(SOCKET_EVENTS.CONVERSATION_REMOVED_FOR_ME, onRemovedForMe);
-    socket.on(SOCKET_EVENTS.CONVERSATION_DELETED, onConversationDeleted);
-    socket.on(SOCKET_EVENTS.NOTIFICATION_PUSH, onNotificationPush);
-    socket.on(SOCKET_EVENTS.NOTIFICATION_UNMUTED, onNotificationUnmuted);
-    socket.on(SOCKET_EVENTS.CONVERSATION_BLOCKED, onConversationBlocked);
-    socket.on(SOCKET_EVENTS.CONVERSATION_UNBLOCKED, onConversationUnblocked);
-
-    return () => {
-      socket.off(SOCKET_EVENTS.MESSAGE_NEW, onNew);
-      socket.off(SOCKET_EVENTS.MESSAGE_UPDATED, onUpdated);
-      socket.off(SOCKET_EVENTS.MESSAGE_DELETED, onDeleted);
-      socket.off(SOCKET_EVENTS.RECEIPT_UPDATE, onReceipt);
-      socket.off(SOCKET_EVENTS.CONVERSATION_HISTORY_CLEARED, onHistoryCleared);
-      socket.off(SOCKET_EVENTS.CONVERSATION_REMOVED_FOR_ME, onRemovedForMe);
-      socket.off(SOCKET_EVENTS.CONVERSATION_DELETED, onConversationDeleted);
-      socket.off(SOCKET_EVENTS.NOTIFICATION_PUSH, onNotificationPush);
-      socket.off(SOCKET_EVENTS.NOTIFICATION_UNMUTED, onNotificationUnmuted);
-      socket.off(SOCKET_EVENTS.CONVERSATION_BLOCKED, onConversationBlocked);
-      socket.off(SOCKET_EVENTS.CONVERSATION_UNBLOCKED, onConversationUnblocked);
-    };
-  }, [socket, qc, me?.id]);
 
   const conversations = query.data?.pages.flatMap((p) => p.conversations) ?? [];
 

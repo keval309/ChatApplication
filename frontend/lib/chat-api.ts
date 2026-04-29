@@ -1,6 +1,7 @@
 import { api, unwrap } from "./api";
 import type {
   ConversationListItem,
+  ConversationMemberRole,
   ConversationsPage,
   MessagesPage,
 } from "@/types/chat";
@@ -81,7 +82,7 @@ export async function setConversationPinned(args: {
   id: string;
   pinned: boolean;
 }): Promise<void> {
-  await api.patch(`/api/conversations/${encodeURIComponent(args.id)}/pin`, {
+  await api.patch(`/api/conversations/${encodeURIComponent(args.id)}/inbox-pin`, {
     pinned: args.pinned,
   });
 }
@@ -100,4 +101,133 @@ export async function listMessages(args: {
       { params },
     ),
   );
+}
+
+export async function createGroup(args: {
+  name: string;
+  description?: string | null;
+  avatarUrl?: string | null;
+  memberIds: string[];
+}): Promise<{ conversationId: string }> {
+  return unwrap(
+    api.post("/api/conversations/group", args),
+  );
+}
+
+export async function addConversationMembers(
+  conversationId: string,
+  userIds: string[],
+): Promise<{
+  messageHistoryForNewMembers: string;
+  addedUsers: Array<{
+    id: string;
+    displayName: string | null;
+    avatarUrl: string | null;
+    role: ConversationMemberRole;
+  }>;
+}> {
+  return unwrap(
+    api.post(`/api/conversations/${encodeURIComponent(conversationId)}/members`, {
+      userIds,
+    }),
+  );
+}
+
+export async function removeConversationMember(
+  conversationId: string,
+  userId: string,
+): Promise<void> {
+  await api.delete(
+    `/api/conversations/${encodeURIComponent(conversationId)}/members/${encodeURIComponent(userId)}`,
+  );
+}
+
+export async function patchMemberRole(
+  conversationId: string,
+  userId: string,
+  role: "ADMIN" | "MEMBER",
+): Promise<void> {
+  await api.patch(
+    `/api/conversations/${encodeURIComponent(conversationId)}/members/${encodeURIComponent(userId)}/role`,
+    { role },
+  );
+}
+
+export async function transferGroupOwnership(
+  conversationId: string,
+  newOwnerId: string,
+): Promise<void> {
+  await api.post(
+    `/api/conversations/${encodeURIComponent(conversationId)}/transfer-ownership`,
+    { newOwnerId },
+  );
+}
+
+export type WhoCanSetting = "EVERYONE" | "ADMINS_ONLY";
+export type MessageHistoryPolicy = "FULL" | "LAST_7_DAYS" | "NONE";
+
+export async function patchGroupSettings(
+  conversationId: string,
+  body: {
+    name?: string;
+    description?: string | null;
+    avatarUrl?: string | null;
+    slowModeSeconds?: number;
+    whoCanAddMembers?: WhoCanSetting;
+    whoCanSendMessages?: WhoCanSetting;
+    messageHistoryForNewMembers?: MessageHistoryPolicy;
+  },
+): Promise<void> {
+  await api.patch(
+    `/api/conversations/${encodeURIComponent(conversationId)}/group`,
+    body,
+  );
+}
+
+export async function createGroupInvite(
+  conversationId: string,
+  body?: { inviteCodeExpiresAt?: string | null; inviteCodeMaxUses?: number | null },
+): Promise<{ inviteUrl: string }> {
+  return unwrap(
+    api.post(
+      `/api/conversations/${encodeURIComponent(conversationId)}/invite`,
+      body ?? {},
+    ),
+  );
+}
+
+export async function revokeGroupInvite(conversationId: string): Promise<void> {
+  await api.delete(
+    `/api/conversations/${encodeURIComponent(conversationId)}/invite`,
+  );
+}
+
+export async function joinGroupByInvite(
+  inviteCode: string,
+): Promise<{ conversationId: string }> {
+  return unwrap(
+    api.post(`/api/join/${encodeURIComponent(inviteCode)}`),
+  );
+}
+
+export async function pinConversationMessage(
+  conversationId: string,
+  messageId: string,
+): Promise<void> {
+  await api.patch(
+    `/api/conversations/${encodeURIComponent(conversationId)}/pin`,
+    { messageId },
+  );
+}
+
+export async function unpinConversationMessage(
+  conversationId: string,
+): Promise<void> {
+  await api.delete(
+    `/api/conversations/${encodeURIComponent(conversationId)}/pin`,
+  );
+}
+
+export async function leaveGroup(conversationId: string): Promise<void> {
+  await api.post(`/api/conversations/${encodeURIComponent(conversationId)}/leave`);
 }

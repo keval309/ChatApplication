@@ -46,12 +46,18 @@ interface MessageComposerProps {
   disabled?: boolean;
   /** Shown when connected; overrides the default "Type a message…". */
   composerPlaceholder?: string;
+  /**
+   * Group slow mode interval in seconds (for members). After a successful send,
+   * sending is blocked for this long. Admins typically pass 0.
+   */
+  groupSlowModeSeconds?: number;
 }
 
 export function MessageComposer({
   conversationId,
   disabled,
   composerPlaceholder,
+  groupSlowModeSeconds = 0,
 }: MessageComposerProps) {
   const { data: me } = useMe();
   const { socket, isConnected } = useSocket();
@@ -67,11 +73,30 @@ export function MessageComposer({
 
   const [emojiOpen, setEmojiOpen] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  const [slowSecondsLeft, setSlowSecondsLeft] = React.useState(0);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+
+  React.useEffect(() => {
+    setSlowSecondsLeft(0);
+  }, [conversationId]);
+
+  React.useEffect(() => {
+    if (slowSecondsLeft <= 0) return;
+    const id = window.setTimeout(() => {
+      setSlowSecondsLeft((s) => Math.max(0, s - 1));
+    }, 1000);
+    return () => window.clearTimeout(id);
+  }, [slowSecondsLeft]);
 
   const trimmed = draft.trim();
   const overLimit = draft.length > MAX_LENGTH;
-  const canSend = trimmed.length > 0 && !overLimit && !submitting && !disabled;
+  const slowBlocked = slowSecondsLeft > 0;
+  const canSend =
+    trimmed.length > 0 &&
+    !overLimit &&
+    !submitting &&
+    !disabled &&
+    !slowBlocked;
 
   // Focus textarea when reply target appears.
   React.useEffect(() => {
@@ -159,10 +184,25 @@ export function MessageComposer({
         .emitWithAck(SOCKET_EVENTS.MESSAGE_SEND, payload);
       if (!ack?.ok) {
         markOptimisticFailed(qc, conversationId, tempId);
-        toast.error(ack?.error?.message ?? "Couldn't send message");
+        const code = ack?.error?.error;
+        const retryAfter =
+          typeof ack?.error?.retryAfter === "number"
+            ? ack.error.retryAfter
+            : groupSlowModeSeconds;
+        if (code === "SLOW_MODE" && retryAfter > 0) {
+          setSlowSecondsLeft(retryAfter);
+          toast.error(
+            ack?.error?.message ?? `Slow mode: wait ${retryAfter}s before sending again.`,
+          );
+        } else {
+          toast.error(ack?.error?.message ?? "Couldn't send message");
+        }
         // Restore the draft so the user can edit/retry without retyping.
         setDraft(conversationId, content);
         return;
+      }
+      if (groupSlowModeSeconds > 0) {
+        setSlowSecondsLeft(groupSlowModeSeconds);
       }
       // Server-side broadcast (`message:new`) reconciles via idempotencyKey
       // → useMessages replaces the optimistic temp with the real message.
@@ -189,6 +229,7 @@ export function MessageComposer({
     setReplyTarget,
     notifyStopped,
     setDraft,
+    groupSlowModeSeconds,
   ]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -244,6 +285,15 @@ export function MessageComposer({
         />
       ) : null}
 
+      {slowBlocked ? (
+        <p
+          className="px-3 pt-2 text-xs text-text-muted"
+          role="status"
+          aria-live="polite"
+        >
+          Slow mode: you can send again in {slowSecondsLeft}s
+        </p>
+      ) : null}
       <div className="flex items-end gap-1.5 p-2">
         <ToolbarButton
           ariaLabel="Add attachment"

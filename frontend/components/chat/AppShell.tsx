@@ -4,6 +4,7 @@ import * as React from "react";
 import { useParams, usePathname } from "next/navigation";
 import { cn } from "@/lib/utils/cn";
 import { useSocket } from "@/hooks/useSocket";
+import { useConversationSocketSubscriptions } from "@/hooks/useConversationSocketSubscriptions";
 import { Sidebar } from "./Sidebar";
 import { BottomTabBar } from "./BottomTabBar";
 import { ChatList } from "./ChatList";
@@ -23,6 +24,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Mounting useSocket here boots the singleton once for the entire app
   // after auth has resolved (the (main) layout gates on `useMe`).
   useSocket();
+  useConversationSocketSubscriptions();
 
   const params = useParams<{ id?: string }>();
   const pathname = usePathname() ?? "";

@@ -1,4 +1,4 @@
-import type { MessageReaction, MessageType, ReadReceiptEntry } from "./chat";
+import type { Message, MessageReaction, MessageType, ReadReceiptEntry, ConversationMemberRole } from "./chat";
 import type { PresenceStatus } from "./auth";
 
 /**
@@ -33,6 +33,17 @@ export const SOCKET_EVENTS = {
   CONVERSATION_DELETED: "conversation:deleted",
   CONVERSATION_BLOCKED: "conversation:blocked",
   CONVERSATION_UNBLOCKED: "conversation:unblocked",
+
+  GROUP_MEMBER_ADDED: "group:member_added",
+  GROUP_MEMBER_REMOVED: "group:member_removed",
+  GROUP_MEMBER_LEFT: "group:member_left",
+  GROUP_ROLE_CHANGED: "group:role_changed",
+  GROUP_OWNERSHIP_TRANSFERRED: "group:ownership_transferred",
+  GROUP_SETTINGS_UPDATED: "group:settings_updated",
+  GROUP_MESSAGE_PINNED: "group:message_pinned",
+  GROUP_MESSAGE_UNPINNED: "group:message_unpinned",
+  GROUP_DISSOLVED: "group:dissolved",
+  GROUP_CREATED: "group:created",
 } as const;
 
 export type SocketEventName = (typeof SOCKET_EVENTS)[keyof typeof SOCKET_EVENTS];
@@ -146,6 +157,7 @@ export interface NotificationPushEvent {
 
 export interface NotificationUnmutedEvent {
   conversationId: string;
+  conversationName?: string;
 }
 
 export interface ConversationHistoryClearedEvent {
@@ -176,9 +188,77 @@ export interface PresenceChangedEvent {
   lastSeen: string | null;
 }
 
+export interface GroupMemberAddedUserWire {
+  id: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  role: ConversationMemberRole;
+}
+
+export interface GroupMemberAddedEvent {
+  conversationId: string;
+  addedUsers: GroupMemberAddedUserWire[];
+  addedVia?: "INVITE" | "DIRECT_ADD";
+}
+
+export interface GroupMemberRemovedEvent {
+  conversationId: string;
+  removedUserId: string;
+  removedBy: string;
+}
+
+export interface GroupMemberLeftEvent {
+  conversationId: string;
+  userId: string;
+}
+
+export interface GroupRoleChangedEvent {
+  conversationId: string;
+  userId: string;
+  newRole: "ADMIN" | "MEMBER";
+  changedBy: string;
+}
+
+export interface GroupOwnershipTransferredEvent {
+  conversationId: string;
+  newOwnerId: string;
+  previousOwnerId: string;
+}
+
+export interface GroupSettingsUpdatedEvent {
+  conversationId: string;
+  changes: Record<string, string | number>;
+}
+
+export interface GroupMessagePinnedEvent {
+  conversationId: string;
+  message: Message;
+}
+
+export interface GroupMessageUnpinnedEvent {
+  conversationId: string;
+}
+
+export interface GroupDissolvedEvent {
+  conversationId: string;
+}
+
+export interface GroupCreatedEvent {
+  conversationId: string;
+  groupName: string;
+}
+
 export type AckResponse<T> =
   | { ok: true; data: T }
-  | { ok: false; error: { message: string; code?: number } };
+  | {
+      ok: false;
+      error: {
+        message: string;
+        code?: number;
+        error?: string;
+        retryAfter?: number;
+      };
+    };
 
 // ─── Typed event maps for socket.io-client ───────────────────────────────────
 
@@ -220,4 +300,14 @@ export interface ServerToClientEvents {
   "conversation:deleted": (payload: ConversationDeletedEvent) => void;
   "conversation:blocked": (payload: ConversationBlockedEvent) => void;
   "conversation:unblocked": (payload: ConversationUnblockedEvent) => void;
+  "group:member_added": (payload: GroupMemberAddedEvent) => void;
+  "group:member_removed": (payload: GroupMemberRemovedEvent) => void;
+  "group:member_left": (payload: GroupMemberLeftEvent) => void;
+  "group:role_changed": (payload: GroupRoleChangedEvent) => void;
+  "group:ownership_transferred": (payload: GroupOwnershipTransferredEvent) => void;
+  "group:settings_updated": (payload: GroupSettingsUpdatedEvent) => void;
+  "group:message_pinned": (payload: GroupMessagePinnedEvent) => void;
+  "group:message_unpinned": (payload: GroupMessageUnpinnedEvent) => void;
+  "group:dissolved": (payload: GroupDissolvedEvent) => void;
+  "group:created": (payload: GroupCreatedEvent) => void;
 }

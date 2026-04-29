@@ -159,16 +159,21 @@ export function MessageBubble({
   };
 
   // ── Delivery / read state for own messages ───────────────────────────────
+  /** Symmetric privacy: if you disable read receipts, you don't see read state on your own sends (DM or group). */
+  const showOutgoingReadTicks = me?.sendReadReceipts !== false;
   const otherMembers = members.filter((m) => m.userId !== me?.id);
   const readCount = message.readBy.filter((r) => r.userId !== me?.id).length;
   const readByOthers = message.readBy.some(
     (r) => r.userId !== (me?.id ?? "") && r.userId !== message.senderId,
   );
   const allReadResolved =
-    message.allRead !== undefined
+    showOutgoingReadTicks &&
+    (message.allRead !== undefined
       ? message.allRead
-      : otherMembers.length > 0 && readCount >= otherMembers.length;
-  const anyReadResolved = readByOthers || message.allRead === true;
+      : otherMembers.length > 0 && readCount >= otherMembers.length);
+  const anyReadResolved =
+    showOutgoingReadTicks &&
+    (readByOthers || message.allRead === true);
 
   return (
     <div
@@ -253,7 +258,7 @@ export function MessageBubble({
                 allRead={allReadResolved}
                 readCount={readCount}
                 onShowReadBy={
-                  message.readBy.length > 0
+                  showOutgoingReadTicks && message.readBy.length > 0
                     ? () => setReadBySheetOpen(true)
                     : undefined
                 }
